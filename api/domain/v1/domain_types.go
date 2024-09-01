@@ -49,7 +49,6 @@ type DomainSpec struct {
 	Domain string `json:"domain"`
 	// MailgunServer
 	// +kubebuilder:default:=EU
-	// +kubebuilder:validation:Enum:=[EU,US]
 	APIServer string `json:"api_server"`
 	// Secret where creds to Mailgun is stored
 	SecretName string `json:"secretName"`
@@ -74,12 +73,10 @@ type DomainStatus struct {
 	State DomainState `json:"state"`
 
 	// list of DNS records for sending emails
-	// +listType=set
-	SendingDnsRecords []mailgun.DNSRecord `json:"sending_dns_records,omitempty"`
+	SendingDnsRecords []MailgunDomainDnsRecord `json:"sending_dns_records,omitempty"`
 
 	// list of DNS records for receiving emails
-	// +listType=set
-	ReceivingDnsRecords []mailgun.DNSRecord `json:"receiving_dns_records,omitempty"`
+	ReceivingDnsRecords []MailgunDomainDnsRecord `json:"receiving_dns_records,omitempty"`
 
 	// State of the domain on Mailgun
 	DomainState string `json:"domain_state"`

@@ -33,6 +33,7 @@ import (
 var _ = Describe("Domain Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
+		const domainName = "example.com"
 
 		ctx := context.Background()
 
@@ -51,7 +52,10 @@ var _ = Describe("Domain Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: domainv1.DomainSpec{
+						Domain:    domainName,
+						APIServer: mgm.URL(),
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

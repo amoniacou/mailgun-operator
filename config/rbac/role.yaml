@@ -5,10 +5,16 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - domain.mailgun.com
   resources:
   - domains
-  - webhooks
   verbs:
   - create
   - delete
@@ -21,14 +27,12 @@ rules:
   - domain.mailgun.com
   resources:
   - domains/finalizers
-  - webhooks/finalizers
   verbs:
   - update
 - apiGroups:
   - domain.mailgun.com
   resources:
   - domains/status
-  - webhooks/status
   verbs:
   - get
   - patch

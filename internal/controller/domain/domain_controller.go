@@ -19,8 +19,10 @@ package domain
 import (
 	"context"
 	"errors"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -36,12 +38,14 @@ const finalizerName = "domain.mailgun.com/finalizer"
 // DomainReconciler reconciles a Domain object
 type DomainReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -55,11 +59,16 @@ type DomainReconciler struct {
 func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 	var mailgunDomain *domainv1.Domain
+
+	// lookup for item
 	if err := r.Get(ctx, req.NamespacedName, mailgunDomain); err != nil {
 		log.Error(err, "unable to fetch Domain")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	domainName := mailgunDomain.Spec.Domain
+
+	// get mailgun API key from secret
 	apiKey, err := r.getDomainAPIKey(ctx, req, mailgunDomain)
 
 	// if no secret than just fail
@@ -68,7 +77,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// setup mailgun client
-	mg := mailgun.NewMailgun(mailgunDomain.Spec.Domain, apiKey)
+	mg := mailgun.NewMailgun(domainName, apiKey)
 	switch mailgunDomain.Spec.APIServer {
 	case "EU":
 		mg.SetAPIBase(mailgun.APIBaseEU)
@@ -90,17 +99,67 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			}
 		}
 	} else {
+		// The object is being deleted
+		if controllerutil.ContainsFinalizer(mailgunDomain, finalizerName) {
+			// our finalizer is present, so lets handle any external dependency
+			r.Recorder.Eventf(mailgunDomain, "Normal", "DeletingDomain",
+				"Deleting domain %s from mailgun", domainName,
+			)
+			if err := mg.DeleteDomain(ctx, domainName); err != nil {
+				// if fail to delete the external dependency here, return with error
+				// so that it can be retried.
+				log.Error(err, "Unable to delete domain from mailgun")
+				r.Recorder.Eventf(mailgunDomain, "Warning", "DeletingDomainFailed",
+					"Deleting domain %s from mailgun is failed", domainName,
+				)
+				return ctrl.Result{}, err
+			}
 
+			// remove our finalizer from the list and update it.
+			controllerutil.RemoveFinalizer(mailgunDomain, finalizerName)
+			if err := r.Update(ctx, mailgunDomain); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	// if its a new record
 	if mailgunDomain.Status.State == domainv1.DomainCreated {
+		_, err := mg.GetDomain(ctx, domainName)
+		if err == nil {
+			log.WithValues("domain", domainName).Info("Domain already exists on Mailgun")
+			r.Recorder.Eventf(mailgunDomain, "Warning", "DomainExisted",
+				"Domain %s is already exists on mailgun", domainName,
+			)
+			mailgunDomain.Status.NotManaged = true
+			mailgunDomain.Status.State = domainv1.DomainFailed
+			mailgunDomain.Status.MailgunError = "domain already exists on mailgun"
+			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+				log.Error(err, "unable to update Domain status")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
 		mdomain, err := r.createDomain(ctx, mailgunDomain, mg)
 		if err != nil {
 			log.Error(err, "Unable to create domain on mailgun")
+			mailgunDomain.Status.State = domainv1.DomainFailed
+			mailgunDomain.Status.MailgunError = err.Error()
+			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+				log.Error(err, "unable to update Domain status")
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{}, nil
 		}
+		mailgunDomain.Status.State = domainv1.DomainProcessing
 		mailgunDomain.Status.DomainState = mdomain.State
+		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+			log.Error(err, "unable to update Domain status")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{
+			RequeueAfter: time.Minute * 5,
+		}, nil
 	}
 
 	return ctrl.Result{}, nil

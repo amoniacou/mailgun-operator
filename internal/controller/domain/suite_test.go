@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	"github.com/mailgun/mailgun-go/v4"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,6 +46,7 @@ var k8sClient client.Client
 var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
+var mgm mailgun.MockServer
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -86,10 +88,15 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	// start mailgun mock server
+	mgm = mailgun.NewMockServer()
+
 })
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	// stop mailgun mock server
+	mgm.Stop()
 	cancel()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())

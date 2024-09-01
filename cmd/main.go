@@ -145,17 +145,11 @@ func main() {
 	}
 
 	if err = (&domaincontroller.DomainReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("mailgun-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Domain")
-		os.Exit(1)
-	}
-	if err = (&domaincontroller.WebhookReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Webhook")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
