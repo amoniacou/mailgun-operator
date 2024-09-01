@@ -1,0 +1,35 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains
+  - webhooks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains/finalizers
+  - webhooks/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains/status
+  - webhooks/status
+  verbs:
+  - get
+  - patch
+  - update
