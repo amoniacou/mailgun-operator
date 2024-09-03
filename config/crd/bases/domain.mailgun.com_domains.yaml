@@ -136,7 +136,6 @@ spec:
                   type: object
                 type: array
               state:
-                default: created
                 description: Global state of the record
                 type: string
             required:

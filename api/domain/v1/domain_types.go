@@ -69,7 +69,6 @@ type DomainSpec struct {
 // DomainStatus defines the observed state of Domain
 type DomainStatus struct {
 	// Global state of the record
-	// +kubebuilder:default:=created
 	State DomainState `json:"state"`
 
 	// list of DNS records for sending emails

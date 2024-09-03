@@ -19,6 +19,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/mailgun/mailgun-go/v4"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
-	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -52,6 +53,7 @@ var k8sManager ctrl.Manager
 var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
+
 var mgm mailgun.MockServer
 
 func TestControllers(t *testing.T) {
@@ -66,18 +68,8 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	By("bootstrapping test environment")
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: true,
 
-		// The BinaryAssetsDirectory is only required if you want to run the tests directly
-		// without call the makefile target test. If not informed it will look for the
-		// default path defined in controller-runtime which is /usr/local/kubebuilder/.
-		// Note that you must have the required binaries setup under the bin directory to perform
-		// the tests directly. When we run make test it will be setup and used automatically.
-		BinaryAssetsDirectory: filepath.Join("..", "..", "..", "bin", "k8s",
-			fmt.Sprintf("1.31.0-%s-%s", runtime.GOOS, runtime.GOARCH)),
-	}
+	testEnv = buildTestEnv()
 
 	var err error
 	// cfg is defined in this file globally.
@@ -85,14 +77,14 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
-	// start mailgun server
-	mgm = mailgun.NewMockServer()
-	fmt.Printf("mailgun mock server url: %s", mgm.URL())
-
 	err = domainv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
+
+	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(k8sClient).NotTo(BeNil())
 
 	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
@@ -100,21 +92,23 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	k8sClient = k8sManager.GetClient()
-	Expect(k8sClient).ToNot(BeNil())
-
 	// start reconciler
 	err = (&DomainReconciler{
-		Client:   k8sClient,
+		Client:   k8sManager.GetClient(),
 		Scheme:   k8sManager.GetScheme(),
 		Recorder: k8sManager.GetEventRecorderFor("domain-controller"),
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
+	// start mailgun server
+	mgm = mailgun.NewMockServer()
+	fmt.Printf("mailgun mock server url: %s", mgm.URL())
+
 	// start manager
 	go func() {
 		defer GinkgoRecover()
-		err = k8sManager.Start(ctrl.SetupSignalHandler())
+		//err = k8sManager.Start(ctrl.SetupSignalHandler())
+		err = k8sManager.Start(ctx)
 		Expect(err).ToNot(HaveOccurred())
 	}()
 
@@ -124,10 +118,29 @@ var _ = AfterSuite(func() {
 	By("tearing down the test environment")
 	cancel()
 	// stop mailgun mock server
-	//mgm.Stop()
+	mgm.Stop()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+func buildTestEnv() *envtest.Environment {
+	const (
+		envUseExistingCluster = "USE_EXISTING_CLUSTER"
+	)
+
+	testEnvironment := &envtest.Environment{}
+
+	if os.Getenv(envUseExistingCluster) != "true" {
+		By("bootstrapping test environment")
+		testEnvironment.BinaryAssetsDirectory = filepath.Join("..", "..", "..", "bin", "k8s",
+			fmt.Sprintf("1.31.0-%s-%s", runtime.GOOS, runtime.GOARCH))
+		testEnvironment.CRDDirectoryPaths = []string{filepath.Join("..", "..", "..", "config", "crd", "bases")}
+		// testEnvironment.AttachControlPlaneOutput = true
+		testEnvironment.ErrorIfCRDPathMissing = true
+	}
+
+	return testEnvironment
+}
 
 func newFakeNamespace() string {
 	name := rand.String(10)

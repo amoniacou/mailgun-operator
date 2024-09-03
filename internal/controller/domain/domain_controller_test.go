@@ -17,10 +17,13 @@ limitations under the License.
 package domain
 
 import (
+	"fmt"
 	"time"
 
+	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 var _ = Describe("Domain Controller", func() {
@@ -32,24 +35,25 @@ var _ = Describe("Domain Controller", func() {
 	)
 	Context("When reconciling a resource", func() {
 
-		It("should create mailgun domain correctly", func() {
+		It("should create mailgun domain correctly and store DNS records", func() {
 			// ctx := context.Background()
 			namespace := newFakeNamespace()
+			fmt.Printf("namespace name: %s", namespace)
+			Expect(namespace).ToNot(BeNil())
 			domainName := "example.com"
 			doDomain := newDigitalOceanDomain(namespace, domainName)
-			Expect(doDomain.Spec.Domain).Should(Equal(domainName))
 
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
 
-			// doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
-			// createdDODomain := &domainv1.Domain{}
-			// Eventually(func() bool {
-			// 	err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
-			// 	return err == nil
-			// }, timeout, interval).Should(BeTrue())
+			time.Sleep(10 * time.Second)
 
-			// Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
+			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
+			Expect(createdDODomain.Status.DomainState).Should(Equal("pending"))
 		})
 	})
 })

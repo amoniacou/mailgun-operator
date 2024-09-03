@@ -19,6 +19,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,6 +47,7 @@ type DomainReconciler struct {
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=list;get;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -124,7 +126,8 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// if its a new record
-	if mailgunDomain.Status.State == domainv1.DomainCreated {
+	fmt.Printf("domain: %v\n", mailgunDomain.Status)
+	if len(mailgunDomain.Status.State) == 0 {
 		_, err := mg.GetDomain(ctx, domainName)
 		if err == nil {
 			log.WithValues("domain", domainName).Info("Domain already exists on Mailgun")
