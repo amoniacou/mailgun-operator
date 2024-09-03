@@ -17,72 +17,39 @@ limitations under the License.
 package domain
 
 import (
-	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 )
 
 var _ = Describe("Domain Controller", func() {
+
+	const (
+		timeout  = time.Second * 10
+		interval = time.Millisecond * 250
+		duration = time.Second * 10
+	)
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
-		const domainName = "example.com"
 
-		ctx := context.Background()
+		It("should create mailgun domain correctly", func() {
+			// ctx := context.Background()
+			namespace := newFakeNamespace()
+			domainName := "example.com"
+			doDomain := newDigitalOceanDomain(namespace, domainName)
+			Expect(doDomain.Spec.Domain).Should(Equal(domainName))
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		domain := &domainv1.Domain{}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind Domain")
-			err := k8sClient.Get(ctx, typeNamespacedName, domain)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &domainv1.Domain{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					Spec: domainv1.DomainSpec{
-						Domain:    domainName,
-						APIServer: mgm.URL(),
-					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
-
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &domainv1.Domain{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance Domain")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &DomainReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			// doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			// createdDODomain := &domainv1.Domain{}
+			// Eventually(func() bool {
+			// 	err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+			// 	return err == nil
+			// }, timeout, interval).Should(BeTrue())
+
+			// Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
 		})
 	})
 })

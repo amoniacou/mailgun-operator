@@ -58,7 +58,7 @@ type DomainReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-	var mailgunDomain *domainv1.Domain
+	var mailgunDomain = &domainv1.Domain{}
 
 	// lookup for item
 	if err := r.Get(ctx, req.NamespacedName, mailgunDomain); err != nil {
