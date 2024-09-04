@@ -21,7 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type MailgunDomainDnsRecord struct {
+type DnsRecord struct {
 	Name       string `json:"name,omitempty"`
 	Priority   string `json:"priority,omitempty"`
 	RecordType string `json:"record_type"`
@@ -72,10 +72,10 @@ type DomainStatus struct {
 	State DomainState `json:"state"`
 
 	// list of DNS records for sending emails
-	SendingDnsRecords []MailgunDomainDnsRecord `json:"sending_dns_records,omitempty"`
+	SendingDnsRecords []DnsRecord `json:"sending_dns_records,omitempty"`
 
 	// list of DNS records for receiving emails
-	ReceivingDnsRecords []MailgunDomainDnsRecord `json:"receiving_dns_records,omitempty"`
+	ReceivingDnsRecords []DnsRecord `json:"receiving_dns_records,omitempty"`
 
 	// State of the domain on Mailgun
 	DomainState string `json:"domain_state"`

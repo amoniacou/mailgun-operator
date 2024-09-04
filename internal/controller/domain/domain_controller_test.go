@@ -17,7 +17,6 @@ limitations under the License.
 package domain
 
 import (
-	"fmt"
 	"time"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
@@ -38,7 +37,6 @@ var _ = Describe("Domain Controller", func() {
 		It("should create mailgun domain correctly and store DNS records", func() {
 			// ctx := context.Background()
 			namespace := newFakeNamespace()
-			fmt.Printf("namespace name: %s", namespace)
 			Expect(namespace).ToNot(BeNil())
 			domainName := "example.com"
 			doDomain := newDigitalOceanDomain(namespace, domainName)
@@ -47,7 +45,10 @@ var _ = Describe("Domain Controller", func() {
 			createdDODomain := &domainv1.Domain{}
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
-				return err == nil
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainCreated
+				}
+				return false
 			}, timeout, interval).Should(BeTrue())
 
 			time.Sleep(10 * time.Second)

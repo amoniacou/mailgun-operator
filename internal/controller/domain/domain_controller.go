@@ -128,22 +128,34 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// if its a new record
 	fmt.Printf("domain: %v\n", mailgunDomain.Status)
 	if len(mailgunDomain.Status.State) == 0 {
+		// Set domain as processing
+		mailgunDomain.Status.State = domainv1.DomainProcessing
+
+		// Update status
+		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+			log.Error(err, "unable to update Domain status")
+			return ctrl.Result{}, err
+		}
+
+		// try to search domain on Mailgun
 		_, err := mg.GetDomain(ctx, domainName)
 		if err == nil {
-			log.WithValues("domain", domainName).Info("Domain already exists on Mailgun")
+			errorMgs := "Domain already exists on Mailgun"
+			log.WithValues("domain", domainName).Info(errorMgs)
 			r.Recorder.Eventf(mailgunDomain, "Warning", "DomainExisted",
 				"Domain %s is already exists on mailgun", domainName,
 			)
 			mailgunDomain.Status.NotManaged = true
 			mailgunDomain.Status.State = domainv1.DomainFailed
-			mailgunDomain.Status.MailgunError = "domain already exists on mailgun"
+			mailgunDomain.Status.MailgunError = errorMgs
 			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 				log.Error(err, "unable to update Domain status")
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
 		}
-		mdomain, err := r.createDomain(ctx, mailgunDomain, mg)
+
+		err = r.createDomain(ctx, mailgunDomain, mg)
 		if err != nil {
 			log.Error(err, "Unable to create domain on mailgun")
 			mailgunDomain.Status.State = domainv1.DomainFailed
@@ -154,14 +166,18 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			}
 			return ctrl.Result{}, nil
 		}
-		mailgunDomain.Status.State = domainv1.DomainProcessing
-		mailgunDomain.Status.DomainState = mdomain.State
+
+		mailgunDomain.Status.State = domainv1.DomainCreated
+
+		// update status with records
 		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 			log.Error(err, "unable to update Domain status")
 			return ctrl.Result{}, err
 		}
+
+		// wait a 10 minutes for creating DNS records and run validation check
 		return ctrl.Result{
-			RequeueAfter: time.Minute * 5,
+			RequeueAfter: time.Minute * 10,
 		}, nil
 	}
 
@@ -176,20 +192,24 @@ func (r *DomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // Get Domain API key
-func (r *DomainReconciler) getDomainAPIKey(ctx context.Context, req ctrl.Request, domain *domainv1.Domain) (string, error) {
+func (r *DomainReconciler) getDomainAPIKey(
+	ctx context.Context, req ctrl.Request, domain *domainv1.Domain,
+) (string, error) {
 	if len(domain.Spec.SecretName) == 0 {
 		return "", errors.New("secret not defined")
 	}
 	log := log.FromContext(ctx)
 	var secret corev1.Secret
 	if err := r.Get(ctx, client.ObjectKey{Namespace: req.Namespace, Name: domain.Spec.SecretName}, &secret); err != nil {
-		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).Error(err, "Unable to get API key secret")
+		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).
+			Error(err, "Unable to get API key secret")
 		return "", err
 	}
 
 	if _, ok := secret.Data["api-key"]; !ok {
 		err := errors.New("No api-key key inside secret")
-		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).Error(err, "Unable to get API key secret")
+		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).
+			Error(err, "Unable to get API key secret")
 		return "", err
 	}
 
@@ -197,7 +217,7 @@ func (r *DomainReconciler) getDomainAPIKey(ctx context.Context, req ctrl.Request
 }
 
 // Create Domain helper
-func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Domain, mg *mailgun.MailgunImpl) (mailgun.Domain, error) {
+func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Domain, mg *mailgun.MailgunImpl) error {
 	options := mailgun.CreateDomainOptions{}
 	if domain.Spec.DKIMKeySize != nil {
 		options.DKIMKeySize = *domain.Spec.DKIMKeySize
@@ -205,5 +225,27 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 	if domain.Spec.ForceDKIMAuthority != nil {
 		options.ForceDKIMAuthority = *domain.Spec.ForceDKIMAuthority
 	}
-	return mailgun.Domain{}, nil
+	domainResponse, err := mg.CreateDomain(ctx, domain.Spec.Domain, &options)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("response: %v\n", domainResponse.Domain.State)
+	domain.Status.SendingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.SendingDNSRecords)
+	domain.Status.ReceivingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.ReceivingDNSRecords)
+	domain.Status.DomainState = domainResponse.Domain.State
+	return nil
+}
+
+func mgDNSRecordsToDnsRecords(records []mailgun.DNSRecord) []domainv1.DnsRecord {
+	result := make([]domainv1.DnsRecord, len(records))
+	for _, record := range records {
+		result = append(result, domainv1.DnsRecord{
+			Name:       record.Name,
+			Priority:   record.Priority,
+			RecordType: record.RecordType,
+			Valid:      record.Valid,
+			Value:      record.Value,
+		})
+	}
+	return result
 }

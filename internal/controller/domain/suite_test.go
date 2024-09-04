@@ -102,12 +102,11 @@ var _ = BeforeSuite(func() {
 
 	// start mailgun server
 	mgm = mailgun.NewMockServer()
-	fmt.Printf("mailgun mock server url: %s", mgm.URL())
+	fmt.Printf("mailgun mock server url: %s\n", mgm.URL())
 
 	// start manager
 	go func() {
 		defer GinkgoRecover()
-		//err = k8sManager.Start(ctrl.SetupSignalHandler())
 		err = k8sManager.Start(ctx)
 		Expect(err).ToNot(HaveOccurred())
 	}()
@@ -153,7 +152,7 @@ func newFakeNamespace() string {
 		},
 	}
 	err := k8sClient.Create(context.Background(), namespace)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 
 	return name
 }
@@ -171,7 +170,7 @@ func newApiKeySecret(namespace string) *corev1.Secret {
 		},
 	}
 	err := k8sClient.Create(context.Background(), secret)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 
 	return secret
 }
@@ -192,6 +191,6 @@ func newDigitalOceanDomain(namespace, domainName string) *domainv1.Domain {
 	}
 
 	err := k8sClient.Create(context.Background(), manager)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return manager
 }
