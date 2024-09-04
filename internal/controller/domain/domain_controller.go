@@ -207,7 +207,7 @@ func (r *DomainReconciler) getDomainAPIKey(
 	}
 
 	if _, ok := secret.Data["api-key"]; !ok {
-		err := errors.New("No api-key key inside secret")
+		err := errors.New("no api-key key inside secret")
 		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).
 			Error(err, "Unable to get API key secret")
 		return "", err

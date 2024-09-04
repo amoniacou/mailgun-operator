@@ -51,8 +51,6 @@ var _ = Describe("Domain Controller", func() {
 				return false
 			}, timeout, interval).Should(BeTrue())
 
-			time.Sleep(10 * time.Second)
-
 			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
 			Expect(createdDODomain.Status.DomainState).Should(Equal("pending"))
 		})
