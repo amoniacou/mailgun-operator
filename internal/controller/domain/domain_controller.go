@@ -27,13 +27,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/external-dns/endpoint"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
 )
 
-const finalizerName = "domain.mailgun.com/finalizer"
+const (
+	finalizerName    = "domain.mailgun.com/finalizer"
+	endpointOwnerKey = ".metadata.controller"
+)
+
+var apiGVStr = domainv1.GroupVersion.String()
 
 // DomainReconciler reconciles a Domain object
 type DomainReconciler struct {
@@ -173,10 +179,21 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 
+		if *mailgunDomain.Spec.ExternalDNS {
+			var endpointList endpoint.DNSEndpointList
+			// get the list of our childs
+			if err := r.List(ctx, &endpointList, client.InNamespace(req.Namespace), client.MatchingFields{endpointOwnerKey: req.Name}); err != nil {
+				log.Error(err, "Unable to fetch child Endpoint list")
+				return ctrl.Result{}, nil
+			}
+		}
+
 		// wait a 10 minutes for creating DNS records and run validation check
 		return ctrl.Result{
 			RequeueAfter: time.Minute * 10,
 		}, nil
+	} else {
+		// its existing record so we need to check the varification
 	}
 
 	return ctrl.Result{}, nil
