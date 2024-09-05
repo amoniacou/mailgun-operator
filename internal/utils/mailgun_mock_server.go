@@ -19,22 +19,39 @@ type MailgunMockServer struct {
 	mutex         sync.Mutex
 }
 
+const (
+	unknownDNS      string = "unknown"
+	validDNS        string = "valid"
+	unverifiedState string = "unverified"
+	activeState     string = "active"
+)
+
 func NewMailgunServer(apiToken string) *MailgunMockServer {
-	return &MailgunMockServer{
+	s := &MailgunMockServer{
 		apiToken: apiToken,
 	}
+	s.domainList = []mailgun.DomainContainer{}
+	s.activeDomains = []string{}
+	s.Start()
+	return s
 }
 
 func (m *MailgunMockServer) Start() {
 	mux := http.NewServeMux()
 	m.initRoutes(mux)
 	m.httpServer = httptest.NewServer(mux)
+	PrettyPrint(m)
+}
+
+func (m *MailgunMockServer) URL() string {
+	return m.httpServer.URL + "/v4"
 }
 
 func (m *MailgunMockServer) initRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v4/domains", m.authHandler(m.createDomain))
 	mux.HandleFunc("GET /v4/domains", m.authHandler(m.getDomains))
 	mux.HandleFunc("GET /v4/domains/{domain}", m.authHandler(m.getDomain))
+	mux.HandleFunc("PUT /v4/domains/{domain}/verify", m.authHandler(m.verifyDomain))
 }
 
 func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request) {
@@ -43,59 +60,10 @@ func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request)
 
 	domainName := r.FormValue("name")
 
-	activeDomain := "unverified"
-	dnsValid := "unknown"
+	newDomain := m.newMGDomainFor(domainName)
 
-	if slices.Contains(m.activeDomains, domainName) {
-		activeDomain = "active"
-		dnsValid = "valid"
-	}
-
-	newDomain := mailgun.Domain{
-		CreatedAt:    mailgun.RFC2822Time(time.Now().UTC()),
-		Name:         domainName,
-		SMTPLogin:    "postmaster@mailgun.test",
-		SMTPPassword: "smtp_password",
-		Wildcard:     true,
-		SpamAction:   mailgun.SpamActionDisabled,
-		State:        activeDomain,
-		WebScheme:    "http",
-	}
-	receiveRecords := []mailgun.DNSRecord{
-		{
-			Priority:   "10",
-			RecordType: "MX",
-			Valid:      dnsValid,
-			Value:      "mxa.mailgun.org",
-		},
-		{
-			Priority:   "10",
-			RecordType: "MX",
-			Valid:      dnsValid,
-			Value:      "mxb.mailgun.org",
-		},
-	}
-
-	sendingRecords := []mailgun.DNSRecord{
-		{
-			RecordType: "TXT",
-			Valid:      dnsValid,
-			Name:       domainName,
-			Value:      "v=spf1 include:mailgun.org ~all",
-		},
-		{
-			RecordType: "TXT",
-			Valid:      dnsValid,
-			Name:       "d_" + domainName,
-			Value:      "k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUA....",
-		},
-		{
-			RecordType: "CNAME",
-			Valid:      "valid",
-			Name:       "email." + domainName,
-			Value:      "mailgun.org",
-		},
-	}
+	receiveRecords := m.newMGDnsRecordsFor(domainName, false)
+	sendingRecords := m.newMGDnsRecordsFor(domainName, true)
 
 	m.domainList = append(m.domainList, mailgun.DomainContainer{
 		Domain:              newDomain,
@@ -115,12 +83,48 @@ func (m *MailgunMockServer) getDomains(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *MailgunMockServer) getDomain(w http.ResponseWriter, r *http.Request) {
-	domainName := r.URL.Query()["domain"][0]
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+	domainName := r.PathValue("domain")
 	for _, domain := range m.domainList {
 		if domainName == domain.Domain.Name {
 			toJSON(w, map[string]interface{}{
 				"message": "Domain DNS records have been retrieved",
 				"domain":  domain,
+			}, http.StatusOK)
+			return
+		}
+	}
+	toJSON(w, map[string]interface{}{
+		"message": "Domain not found",
+	}, http.StatusNotFound)
+}
+
+func (m *MailgunMockServer) verifyDomain(w http.ResponseWriter, r *http.Request) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+	domainName := r.PathValue("domain")
+	activateDomain := false
+	if slices.Contains(m.activeDomains, domainName) {
+		activateDomain = true
+	}
+
+	for i, domain := range m.domainList {
+		if domainName == domain.Domain.Name {
+			if activateDomain {
+				m.domainList[i].Domain.State = activeState
+			}
+			for j, _ := range domain.ReceivingDNSRecords {
+				m.domainList[i].ReceivingDNSRecords[j].Valid = validDNS
+			}
+			for j, _ := range domain.SendingDNSRecords {
+				m.domainList[i].SendingDNSRecords[j].Valid = validDNS
+			}
+			toJSON(w, map[string]interface{}{
+				"message":               "Domain DNS records have been updated",
+				"domain":                m.domainList[i].Domain,
+				"receiving_dns_records": m.domainList[i].ReceivingDNSRecords,
+				"sending_dns_records":   m.domainList[i].SendingDNSRecords,
 			}, http.StatusOK)
 			return
 		}
@@ -146,11 +150,91 @@ func (m *MailgunMockServer) authHandler(next http.HandlerFunc) http.HandlerFunc 
 }
 
 func toJSON(w http.ResponseWriter, obj interface{}, status int) {
-	if err := json.NewEncoder(w).Encode(obj); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 	w.Header().Set("Content-Type", "application/json")
+	b, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(status)
+	_, err = w.Write(b)
+	if err != nil {
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (m *MailgunMockServer) newMGDomainFor(domainName string) mailgun.Domain {
+	activeDomain := unverifiedState
+
+	if slices.Contains(m.activeDomains, domainName) {
+		activeDomain = activeState
+	}
+
+	return mailgun.Domain{
+		CreatedAt:    mailgun.RFC2822Time(time.Now().UTC()),
+		Name:         domainName,
+		SMTPLogin:    "postmaster@mailgun.test",
+		SMTPPassword: "smtp_password",
+		Wildcard:     true,
+		SpamAction:   mailgun.SpamActionDisabled,
+		State:        activeDomain,
+		WebScheme:    "http",
+	}
+}
+
+func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords bool) []mailgun.DNSRecord {
+	var records []mailgun.DNSRecord
+
+	dnsValid := unknownDNS
+
+	if slices.Contains(m.activeDomains, domainName) {
+		dnsValid = validDNS
+	}
+
+	if sendingRecords {
+		records = []mailgun.DNSRecord{
+			{
+				RecordType: "TXT",
+				Valid:      dnsValid,
+				Name:       domainName,
+				Value:      "v=spf1 include:mailgun.org ~all",
+			},
+			{
+				RecordType: "TXT",
+				Valid:      dnsValid,
+				Name:       "d.mail." + domainName,
+				Value:      "k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUA....",
+			},
+			{
+				RecordType: "CNAME",
+				Valid:      "valid",
+				Name:       "email." + domainName,
+				Value:      "mailgun.org",
+			},
+		}
+	} else {
+		records = []mailgun.DNSRecord{
+			{
+				Priority:   "10",
+				RecordType: "MX",
+				Valid:      dnsValid,
+				Value:      "mxa.mailgun.org",
+			},
+			{
+				Priority:   "10",
+				RecordType: "MX",
+				Valid:      dnsValid,
+				Value:      "mxb.mailgun.org",
+			},
+		}
+	}
+
+	return records
 }
 
 func (m *MailgunMockServer) Stop() {

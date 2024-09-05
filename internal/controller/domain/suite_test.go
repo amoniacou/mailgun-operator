@@ -27,7 +27,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/mailgun/mailgun-go/v4"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	"github.com/amoniacou/mailgun-operator/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -54,7 +54,11 @@ var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
 
-var mgm mailgun.MockServer
+var mgm *utils.MailgunMockServer
+
+const (
+	validApiToken string = "valid-token"
+)
 
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -66,8 +70,6 @@ var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	ctx, cancel = context.WithCancel(context.TODO())
-
-	By("bootstrapping test environment")
 
 	testEnv = buildTestEnv()
 
@@ -100,8 +102,12 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
+	By("start mailgun fake server")
 	// start mailgun server
-	mgm = mailgun.NewMockServer()
+	mgm = utils.NewMailgunServer(validApiToken)
+	utils.PrettyPrint(map[string]interface{}{
+		"mg": mgm,
+	})
 	fmt.Printf("mailgun mock server url: %s\n", mgm.URL())
 
 	// start manager
@@ -166,7 +172,7 @@ func newApiKeySecret(namespace string) *corev1.Secret {
 			Namespace: namespace,
 		},
 		Data: map[string][]byte{
-			"api-key": []byte("api-key"),
+			"api-key": []byte(validApiToken),
 		},
 	}
 	err := k8sClient.Create(context.Background(), secret)
