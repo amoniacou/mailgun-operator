@@ -27,4 +27,8 @@ resources:
   kind: Webhook
   path: github.com/amoniacou/mailgun-operator/api/domain/v1
   version: v1
+- domain: k8s.io
+  group: externaldns
+  kind: DNSEndpoint
+  version: v1alpha1
 version: "3"

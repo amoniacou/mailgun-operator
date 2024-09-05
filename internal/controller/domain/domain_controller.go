@@ -19,10 +19,14 @@ package domain
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	ref "k8s.io/client-go/tools/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -32,6 +36,7 @@ import (
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -53,6 +58,8 @@ type DomainReconciler struct {
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=list;get;watch
+// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;create;update;patch;delete
+// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -180,11 +187,56 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		if *mailgunDomain.Spec.ExternalDNS {
-			var endpointList endpoint.DNSEndpointList
-			// get the list of our childs
-			if err := r.List(ctx, &endpointList, client.InNamespace(req.Namespace), client.MatchingFields{endpointOwnerKey: req.Name}); err != nil {
-				log.Error(err, "Unable to fetch child Endpoint list")
-				return ctrl.Result{}, nil
+			// create receive records
+			refs := []corev1.ObjectReference{}
+
+			for _, record := range slices.Concat(mailgunDomain.Status.ReceivingDnsRecords, mailgunDomain.Status.SendingDnsRecords) {
+				entryName := fmt.Sprintf("%s-", domainName)
+				dnsName := record.Name
+				target := record.Value
+				// sending record
+				if len(record.Name) > 0 {
+					subdomainPart := strings.Split(record.Name, "."+domainName)[0]
+					entryName += strings.ReplaceAll(subdomainPart, ".", "")
+				} else {
+					subdomainPart := strings.Split(record.Name, ".mailgun.org")[0]
+					entryName += strings.ReplaceAll(subdomainPart, ".", "")
+					dnsName = domainName
+					target = fmt.Sprintf("%s %s", record.Priority, record.Value)
+				}
+				dnsEntrypoint := &endpoint.DNSEndpoint{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      entryName,
+						Namespace: req.Namespace,
+					},
+					Spec: endpoint.DNSEndpointSpec{
+						Endpoints: []*endpoint.Endpoint{
+							endpoint.NewEndpoint(dnsName, record.RecordType, target),
+						},
+					},
+				}
+
+				if err := ctrl.SetControllerReference(mailgunDomain, dnsEntrypoint, r.Scheme); err != nil {
+					log.Error(err, "unable to construct new DNSEndpoint for domain "+domainName)
+					continue
+				}
+
+				if err := r.Create(ctx, dnsEntrypoint); err != nil {
+					log.Error(err, "unable to create '"+dnsEntrypoint.Name+"' DNSEndpoint!")
+					continue
+				}
+				entrypointRef, err := ref.GetReference(r.Scheme, dnsEntrypoint)
+				if err != nil {
+					log.Error(err, "unable to make a reference to DNSEntrypoint", "entrypoint", dnsEntrypoint)
+					continue
+				}
+				refs = append(refs, *entrypointRef)
+			}
+
+			mailgunDomain.Status.DnsEntrypoints = refs
+			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+				log.Error(err, "unable to update Domain status")
+				return ctrl.Result{}, err
 			}
 		}
 
@@ -192,8 +244,15 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{
 			RequeueAfter: time.Minute * 10,
 		}, nil
-	} else {
-		// its existing record so we need to check the varification
+	}
+
+	if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS {
+		var endpointList endpoint.DNSEndpointList
+		// get the list of our childsi if exists
+		if err := r.List(ctx, &endpointList, client.InNamespace(req.Namespace), client.MatchingFields{endpointOwnerKey: req.Name}); err != nil {
+			log.Error(err, "unable to fetch child Endpoint list")
+			return ctrl.Result{}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil

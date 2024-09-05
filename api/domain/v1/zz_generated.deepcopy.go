@@ -22,6 +22,7 @@ package v1
 
 import (
 	v4 "github.com/mailgun/mailgun-go/v4"
+	corev1 "k8s.io/api/core/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -170,6 +171,11 @@ func (in *DomainStatus) DeepCopyInto(out *DomainStatus) {
 	if in.LastDomainValidationTime != nil {
 		in, out := &in.LastDomainValidationTime, &out.LastDomainValidationTime
 		*out = (*in).DeepCopy()
+	}
+	if in.DnsEntrypoints != nil {
+		in, out := &in.DnsEntrypoints, &out.DnsEntrypoints
+		*out = make([]corev1.ObjectReference, len(*in))
+		copy(*out, *in)
 	}
 }
 
