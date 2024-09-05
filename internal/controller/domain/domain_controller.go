@@ -19,7 +19,6 @@ package domain
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -126,7 +125,6 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// if its a new record
-	fmt.Printf("domain: %v\n", mailgunDomain.Status)
 	if len(mailgunDomain.Status.State) == 0 {
 		// Set domain as processing
 		mailgunDomain.Status.State = domainv1.DomainProcessing
@@ -229,7 +227,6 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 	if err != nil {
 		return err
 	}
-	fmt.Printf("response: %v\n", domainResponse.Domain.State)
 	domain.Status.SendingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.SendingDNSRecords)
 	domain.Status.ReceivingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.ReceivingDNSRecords)
 	domain.Status.DomainState = domainResponse.Domain.State
@@ -238,14 +235,14 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 
 func mgDNSRecordsToDnsRecords(records []mailgun.DNSRecord) []domainv1.DnsRecord {
 	result := make([]domainv1.DnsRecord, len(records))
-	for _, record := range records {
-		result = append(result, domainv1.DnsRecord{
+	for i, record := range records {
+		result[i] = domainv1.DnsRecord{
 			Name:       record.Name,
 			Priority:   record.Priority,
 			RecordType: record.RecordType,
 			Valid:      record.Valid,
 			Value:      record.Value,
-		})
+		}
 	}
 	return result
 }

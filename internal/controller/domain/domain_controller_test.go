@@ -35,7 +35,6 @@ var _ = Describe("Domain Controller", func() {
 	Context("When reconciling a resource", func() {
 
 		It("should create mailgun domain correctly and store DNS records", func() {
-			// ctx := context.Background()
 			namespace := newFakeNamespace()
 			Expect(namespace).ToNot(BeNil())
 			domainName := "example.com"
@@ -52,7 +51,29 @@ var _ = Describe("Domain Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
-			Expect(createdDODomain.Status.DomainState).Should(Equal("pending"))
+			Expect(createdDODomain.Status.DomainState).Should(Equal("unverified"))
+			Expect(len(createdDODomain.Status.ReceivingDnsRecords)).Should(Equal(2))
+			Expect(len(createdDODomain.Status.SendingDnsRecords)).Should(Equal(3))
+		})
+
+		It("should fail to create mailgun domain as its already exists", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			domainName := "fail.com"
+			mgm.AddDomain(domainName)
+			doDomain := newDigitalOceanDomain(namespace, domainName)
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainFailed
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
+			Expect(createdDODomain.Status.NotManaged).Should(BeTrue())
+			Expect(createdDODomain.Status.MailgunError).Should(Equal("Domain already exists on Mailgun"))
 		})
 	})
 })

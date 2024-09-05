@@ -40,12 +40,32 @@ func (m *MailgunMockServer) Start() {
 	mux := http.NewServeMux()
 	m.initRoutes(mux)
 	m.httpServer = httptest.NewServer(mux)
-	PrettyPrint(m)
 }
 
 func (m *MailgunMockServer) URL() string {
 	return m.httpServer.URL + "/v4"
 }
+
+func (m *MailgunMockServer) Stop() {
+	m.httpServer.Close()
+}
+
+func (m *MailgunMockServer) AddDomain(domainName string) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+	newDomain := m.newMGDomainFor(domainName)
+
+	receiveRecords := m.newMGDnsRecordsFor(domainName, false)
+	sendingRecords := m.newMGDnsRecordsFor(domainName, true)
+
+	m.domainList = append(m.domainList, mailgun.DomainContainer{
+		Domain:              newDomain,
+		ReceivingDNSRecords: receiveRecords,
+		SendingDNSRecords:   sendingRecords,
+	})
+}
+
+// Private methods
 
 func (m *MailgunMockServer) initRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v4/domains", m.authHandler(m.createDomain))
@@ -235,8 +255,4 @@ func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords
 	}
 
 	return records
-}
-
-func (m *MailgunMockServer) Stop() {
-	m.httpServer.Close()
 }
