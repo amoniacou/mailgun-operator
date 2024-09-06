@@ -20,7 +20,6 @@ import (
 	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/external-dns/endpoint"
 )
 
 type DnsRecord struct {
@@ -43,6 +42,7 @@ const (
 	DomainCreated    DomainState   = "created"
 	DomainFailed     DomainState   = "failed"
 	DomainProcessing DomainState   = "processing"
+	DomainActivated  DomainState   = "activated"
 )
 
 // DomainSpec defines the desired state of Domain
@@ -92,9 +92,9 @@ type DomainStatus struct {
 	LastDomainValidationTime *metav1.Time `json:"last_domain_validation_time,omitempty"`
 	NotManaged               bool         `json:"not_managed,omitempty"`
 
-	// A list of pointers of created ingresses
+	// A pointer to ExternalDNS Entrypoint
 	// +optional
-	DnsEntrypoints []corev1.ObjectReference `json:"dns_entrypoints,omitempty"`
+	DnsEntrypoint corev1.ObjectReference `json:"dns_entrypoint,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -120,5 +120,4 @@ type DomainList struct {
 
 func init() {
 	SchemeBuilder.Register(&Domain{}, &DomainList{})
-	SchemeBuilder.Register(&endpoint.DNSEndpoint{}, &endpoint.DNSEndpointList{})
 }

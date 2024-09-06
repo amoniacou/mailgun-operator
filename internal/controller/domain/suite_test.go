@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	entrypointv1alpha "github.com/amoniacou/mailgun-operator/api/external_dns/v1alpha1"
 	"github.com/amoniacou/mailgun-operator/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -80,6 +81,9 @@ var _ = BeforeSuite(func() {
 	Expect(cfg).NotTo(BeNil())
 
 	err = domainv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = entrypointv1alpha.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
@@ -181,7 +185,7 @@ func newApiKeySecret(namespace string) *corev1.Secret {
 	return secret
 }
 
-func newDigitalOceanDomain(namespace, domainName string) *domainv1.Domain {
+func newDigitalOceanDomain(namespace, domainName string, externalDNS bool) *domainv1.Domain {
 	name := "domain-" + rand.String(10)
 	secret := newApiKeySecret(namespace)
 	manager := &domainv1.Domain{
@@ -194,6 +198,10 @@ func newDigitalOceanDomain(namespace, domainName string) *domainv1.Domain {
 			SecretName: secret.Name,
 			APIServer:  mgm.URL(),
 		},
+	}
+
+	if externalDNS {
+		manager.Spec.ExternalDNS = &externalDNS
 	}
 
 	err := k8sClient.Create(context.Background(), manager)

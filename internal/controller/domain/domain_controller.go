@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ref "k8s.io/client-go/tools/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -186,54 +188,57 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 
-		if *mailgunDomain.Spec.ExternalDNS {
+		if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS {
 			// create receive records
-			refs := []corev1.ObjectReference{}
+			dnsEntrypoint := &endpoint.DNSEndpoint{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      mailgunDomain.Name,
+					Namespace: req.Namespace,
+				},
+				Spec: endpoint.DNSEndpointSpec{
+					Endpoints: []*endpoint.Endpoint{},
+				},
+			}
+			dnsEntrypoint.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   "externaldns.k8s.io",
+				Version: "v1alpha1",
+				Kind:    "DNSEndpoint",
+			})
 
 			for _, record := range slices.Concat(mailgunDomain.Status.ReceivingDnsRecords, mailgunDomain.Status.SendingDnsRecords) {
 				entryName := fmt.Sprintf("%s-", domainName)
 				dnsName := record.Name
 				target := record.Value
 				// sending record
-				if len(record.Name) > 0 {
+				if record.RecordType != "MX" {
 					subdomainPart := strings.Split(record.Name, "."+domainName)[0]
 					entryName += strings.ReplaceAll(subdomainPart, ".", "")
 				} else {
-					subdomainPart := strings.Split(record.Name, ".mailgun.org")[0]
+					subdomainPart := strings.Split(record.Value, ".mailgun.org")[0]
 					entryName += strings.ReplaceAll(subdomainPart, ".", "")
 					dnsName = domainName
 					target = fmt.Sprintf("%s %s", record.Priority, record.Value)
 				}
-				dnsEntrypoint := &endpoint.DNSEndpoint{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      entryName,
-						Namespace: req.Namespace,
-					},
-					Spec: endpoint.DNSEndpointSpec{
-						Endpoints: []*endpoint.Endpoint{
-							endpoint.NewEndpoint(dnsName, record.RecordType, target),
-						},
-					},
-				}
-
-				if err := ctrl.SetControllerReference(mailgunDomain, dnsEntrypoint, r.Scheme); err != nil {
-					log.Error(err, "unable to construct new DNSEndpoint for domain "+domainName)
-					continue
-				}
-
-				if err := r.Create(ctx, dnsEntrypoint); err != nil {
-					log.Error(err, "unable to create '"+dnsEntrypoint.Name+"' DNSEndpoint!")
-					continue
-				}
-				entrypointRef, err := ref.GetReference(r.Scheme, dnsEntrypoint)
-				if err != nil {
-					log.Error(err, "unable to make a reference to DNSEntrypoint", "entrypoint", dnsEntrypoint)
-					continue
-				}
-				refs = append(refs, *entrypointRef)
+				dnsRecordEndpoint := endpoint.NewEndpoint(dnsName, record.RecordType, target)
+				dnsEntrypoint.Spec.Endpoints = append(dnsEntrypoint.Spec.Endpoints, dnsRecordEndpoint)
 			}
 
-			mailgunDomain.Status.DnsEntrypoints = refs
+			if err := ctrl.SetControllerReference(mailgunDomain, dnsEntrypoint, r.Scheme); err != nil {
+				log.Error(err, "unable to construct new DNSEndpoint", "domain", domainName)
+				return ctrl.Result{}, err
+			}
+
+			if err := r.Create(ctx, dnsEntrypoint); err != nil {
+				log.Error(err, "unable to create DNSEndpoint!", "entrypoint", dnsEntrypoint)
+				return ctrl.Result{}, err
+			}
+			entrypointRef, err := ref.GetReference(r.Scheme, dnsEntrypoint)
+			if err != nil {
+				log.Error(err, "unable to make a reference to DNSEntrypoint", "entrypoint", dnsEntrypoint)
+				return ctrl.Result{}, err
+			}
+
+			mailgunDomain.Status.DnsEntrypoint = *entrypointRef
 			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 				log.Error(err, "unable to update Domain status")
 				return ctrl.Result{}, err
@@ -246,12 +251,34 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}, nil
 	}
 
+	// its not a new record
+
+	// check if ExternalDNS support is enabled
 	if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS {
-		var endpointList endpoint.DNSEndpointList
-		// get the list of our childsi if exists
-		if err := r.List(ctx, &endpointList, client.InNamespace(req.Namespace), client.MatchingFields{endpointOwnerKey: req.Name}); err != nil {
-			log.Error(err, "unable to fetch child Endpoint list")
-			return ctrl.Result{}, nil
+
+		// lets get the dns enpoint
+		dnsEndpoint := &endpoint.DNSEndpoint{}
+		dnsEndpointLookup := types.NamespacedName{
+			Name:      mailgunDomain.Status.DnsEntrypoint.Name,
+			Namespace: mailgunDomain.Status.DnsEntrypoint.Namespace,
+		}
+		if err := r.Get(ctx, dnsEndpointLookup, dnsEndpoint); err != nil {
+			log.Error(err, "unable to fetch linked Endpoint", "endpoint", mailgunDomain.Status.DnsEntrypoint)
+			return ctrl.Result{}, err
+		}
+	}
+
+	// verify domain
+	status, err := mg.VerifyDomain(ctx, domainName)
+	if err != nil {
+		log.Error(err, "unable to verify domain", "domain", domainName)
+	}
+
+	if status == "active" {
+		mailgunDomain.Status.State = domainv1.DomainActivated
+		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+			log.Error(err, "unable to update Domain status")
+			return ctrl.Result{}, err
 		}
 	}
 

@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/external-dns/endpoint"
 )
 
 var _ = Describe("Domain Controller", func() {
@@ -38,7 +39,7 @@ var _ = Describe("Domain Controller", func() {
 			namespace := newFakeNamespace()
 			Expect(namespace).ToNot(BeNil())
 			domainName := "example.com"
-			doDomain := newDigitalOceanDomain(namespace, domainName)
+			doDomain := newDigitalOceanDomain(namespace, domainName, false)
 
 			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
 			createdDODomain := &domainv1.Domain{}
@@ -52,8 +53,9 @@ var _ = Describe("Domain Controller", func() {
 
 			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
 			Expect(createdDODomain.Status.DomainState).Should(Equal("unverified"))
-			Expect(len(createdDODomain.Status.ReceivingDnsRecords)).Should(Equal(2))
-			Expect(len(createdDODomain.Status.SendingDnsRecords)).Should(Equal(3))
+			Expect(createdDODomain.Status.ReceivingDnsRecords).Should(HaveLen(2))
+			Expect(createdDODomain.Status.SendingDnsRecords).Should(HaveLen(3))
+			Expect(createdDODomain.Status.DnsEntrypoint.Name).To(BeEmpty())
 		})
 
 		It("should fail to create mailgun domain as its already exists", func() {
@@ -61,7 +63,7 @@ var _ = Describe("Domain Controller", func() {
 			Expect(namespace).ToNot(BeNil())
 			domainName := "fail.com"
 			mgm.AddDomain(domainName)
-			doDomain := newDigitalOceanDomain(namespace, domainName)
+			doDomain := newDigitalOceanDomain(namespace, domainName, false)
 			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
 			createdDODomain := &domainv1.Domain{}
 			Eventually(func() bool {
@@ -79,8 +81,8 @@ var _ = Describe("Domain Controller", func() {
 		It("should create mailgun domain, store DNS records and create external DNS entities", func() {
 			namespace := newFakeNamespace()
 			Expect(namespace).ToNot(BeNil())
-			domainName := "example.com"
-			doDomain := newDigitalOceanDomain(namespace, domainName)
+			domainName := "another.com"
+			doDomain := newDigitalOceanDomain(namespace, domainName, true)
 
 			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
 			createdDODomain := &domainv1.Domain{}
@@ -94,8 +96,32 @@ var _ = Describe("Domain Controller", func() {
 
 			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
 			Expect(createdDODomain.Status.DomainState).Should(Equal("unverified"))
-			Expect(len(createdDODomain.Status.ReceivingDnsRecords)).Should(Equal(2))
-			Expect(len(createdDODomain.Status.SendingDnsRecords)).Should(Equal(3))
+			Expect(createdDODomain.Status.ReceivingDnsRecords).Should(HaveLen(2))
+			Expect(createdDODomain.Status.SendingDnsRecords).Should(HaveLen(3))
+			Expect(createdDODomain.Status.DnsEntrypoint).ToNot(BeNil())
+			dnsEndpoint := &endpoint.DNSEndpoint{}
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name:      createdDODomain.Status.DnsEntrypoint.Name,
+				Namespace: createdDODomain.Status.DnsEntrypoint.Namespace,
+			}, dnsEndpoint)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dnsEndpoint.Spec.Endpoints).Should(HaveLen(5))
+			// mx records
+			Expect(dnsEndpoint.Spec.Endpoints[0].RecordType).To(Equal("MX"))
+			Expect(dnsEndpoint.Spec.Endpoints[0].DNSName).To(Equal(domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[0].Targets).To(Equal(endpoint.Targets{"10 mxa.mailgun.org"}))
+			Expect(dnsEndpoint.Spec.Endpoints[1].RecordType).To(Equal("MX"))
+			Expect(dnsEndpoint.Spec.Endpoints[1].DNSName).To(Equal(domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[1].Targets).To(Equal(endpoint.Targets{"10 mxb.mailgun.org"}))
+			Expect(dnsEndpoint.Spec.Endpoints[2].RecordType).To(Equal("TXT"))
+			Expect(dnsEndpoint.Spec.Endpoints[2].DNSName).To(Equal(domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[2].Targets).To(Equal(endpoint.Targets{"v=spf1 include:mailgun.org ~all"}))
+			Expect(dnsEndpoint.Spec.Endpoints[3].RecordType).To(Equal("TXT"))
+			Expect(dnsEndpoint.Spec.Endpoints[3].DNSName).To(Equal("d.mail." + domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[3].Targets).To(Equal(endpoint.Targets{"k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUA..."}))
+			Expect(dnsEndpoint.Spec.Endpoints[4].RecordType).To(Equal("CNAME"))
+			Expect(dnsEndpoint.Spec.Endpoints[4].DNSName).To(Equal("email." + domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[4].Targets).To(Equal(endpoint.Targets{"mailgun.org"}))
 		})
 	})
 })
