@@ -56,9 +56,3 @@ rules:
   - list
   - patch
   - update
-- apiGroups:
-  - externaldns.k8s.io
-  resources:
-  - dnsendpoints/status
-  verbs:
-  - get

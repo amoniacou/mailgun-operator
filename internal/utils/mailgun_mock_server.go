@@ -15,6 +15,7 @@ type MailgunMockServer struct {
 	httpServer    *httptest.Server
 	apiToken      string
 	activeDomains []string
+	failedDomains []string
 	domainList    []mailgun.DomainContainer
 	mutex         sync.Mutex
 }
@@ -65,6 +66,31 @@ func (m *MailgunMockServer) AddDomain(domainName string) {
 	})
 }
 
+func (m *MailgunMockServer) ActivateDomain(domainName string) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	m.activeDomains = append(m.activeDomains, domainName)
+}
+
+func (m *MailgunMockServer) FailedDomain(domainName string) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	m.failedDomains = append(m.failedDomains, domainName)
+}
+
+func (m *MailgunMockServer) DeleteDomain(domainName string) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+	for i, domain := range m.domainList {
+		if domain.Domain.Name == domainName {
+			m.domainList = slices.Delete(m.domainList, i, i+1)
+			break
+		}
+	}
+}
+
 // Private methods
 
 func (m *MailgunMockServer) initRoutes(mux *http.ServeMux) {
@@ -72,6 +98,7 @@ func (m *MailgunMockServer) initRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v4/domains", m.authHandler(m.getDomains))
 	mux.HandleFunc("GET /v4/domains/{domain}", m.authHandler(m.getDomain))
 	mux.HandleFunc("PUT /v4/domains/{domain}/verify", m.authHandler(m.verifyDomain))
+	mux.HandleFunc("DELETE /v4/domains/{domain}", m.authHandler(m.deleteDomain))
 }
 
 func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +106,13 @@ func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request)
 	m.mutex.Lock()
 
 	domainName := r.FormValue("name")
+
+	if slices.Contains(m.failedDomains, domainName) {
+		toJSON(w, map[string]string{
+			"message": "Failed to create domain due to invalid DNS configuration.",
+		}, http.StatusInternalServerError)
+		return
+	}
 
 	newDomain := m.newMGDomainFor(domainName)
 
@@ -145,6 +179,25 @@ func (m *MailgunMockServer) verifyDomain(w http.ResponseWriter, r *http.Request)
 				"domain":                m.domainList[i].Domain,
 				"receiving_dns_records": m.domainList[i].ReceivingDNSRecords,
 				"sending_dns_records":   m.domainList[i].SendingDNSRecords,
+			}, http.StatusOK)
+			return
+		}
+	}
+	toJSON(w, map[string]interface{}{
+		"message": "Domain not found",
+	}, http.StatusNotFound)
+}
+
+func (m *MailgunMockServer) deleteDomain(w http.ResponseWriter, r *http.Request) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+	domainName := r.PathValue("domain")
+
+	for i, domain := range m.domainList {
+		if domainName == domain.Domain.Name {
+			m.domainList = slices.Delete(m.domainList, i, i+1)
+			toJSON(w, map[string]interface{}{
+				"message": "Domain have been removed",
 			}, http.StatusOK)
 			return
 		}
