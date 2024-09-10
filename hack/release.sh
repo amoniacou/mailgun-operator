@@ -45,25 +45,12 @@ require_clean_work_tree () {
 
 require_clean_work_tree "release"
 
-# #Verify that you are in a release branch
-# if branch=$(git symbolic-ref --short -q HEAD) && [[ "$branch" == release-* ]]
-# then
-#     echo "Releasing ${release_version}"
-# else
-#     echo >&2 "Release is not possible because you are not on a 'release-*' branch ($branch)"
-#     exit 1
-# fi
-
 make kustomize
 KUSTOMIZE="${REPO_ROOT}/bin/kustomize"
 
 mkdir -p releases/${release_version}
 cp -rv releases/kustomization.yaml.tpl releases/${release_version}/kustomization.yaml
 release_manifest="releases/${release_version}/manager.yaml"
-
-# Perform automated substitutions of the version string in the source code
-sed -i -e "/Version *= *.*/Is/\".*\"/\"${release_version}\"/" \
-    internal/versions/versions.go
 
 CONFIG_TMP_DIR=$(mktemp -d)
 cp -r config/* "${CONFIG_TMP_DIR}"
