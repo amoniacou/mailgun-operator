@@ -1,9 +1,11 @@
 FROM gcr.io/distroless/static:nonroot
+ARG TARGETARCH
 ENV SUMMARY="Mailgun Operator Container Image." \
     DESCRIPTION="This Docker image contains Mailgun Operator."
 
 LABEL summary="$SUMMARY" \
       description="$DESCRIPTION" \
+      org.opencontainers.image.description="$DESCRIPTION" \
       io.k8s.display-name="$SUMMARY" \
       io.k8s.description="$DESCRIPTION" \
       name="Mailgun Operator" \
