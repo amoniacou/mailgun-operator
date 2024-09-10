@@ -13,7 +13,7 @@ jobs:
     name: Build containers
     permissions:
       packages: write
-      contents: read
+      contents: write
       attestations: write
       id-token: write
     runs-on: ubuntu-latest
