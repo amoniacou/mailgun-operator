@@ -52,10 +52,6 @@ mkdir -p releases/${release_version}
 cp -rv releases/kustomization.yaml.tpl releases/${release_version}/kustomization.yaml
 release_manifest="releases/${release_version}/manager.yaml"
 
-# Perform automated substitutions of the version string in the source code
-sed -i -e "/Version *= *.*/Is/\".*\"/\"${release_version}\"/" \
-    internal/versions/versions.go
-
 CONFIG_TMP_DIR=$(mktemp -d)
 cp -r config/* "${CONFIG_TMP_DIR}"
 (

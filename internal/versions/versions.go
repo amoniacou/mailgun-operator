@@ -1,10 +1,5 @@
 package versions
 
-const (
-	// Version is the version of the operator
-	Version = "1.0.0"
-)
-
 // BuildInfo is a struct containing all the info about the build
 type BuildInfo struct {
 	Version, Commit, Date string
