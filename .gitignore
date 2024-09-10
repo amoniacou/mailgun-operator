@@ -24,3 +24,5 @@ vendor
 *.swo
 *~
 *.html
+
+dist/

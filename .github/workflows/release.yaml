@@ -1,0 +1,105 @@
+name: release-publish
+
+on:
+  push:
+    tags:
+      - v*
+env:
+  GOLANG_VERSION: "1.23.x"
+jobs:
+  release:
+    name: Build containers
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.build-meta.outputs.version }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # To identify the commit we need the history and all the tags.
+          fetch-depth: 0
+      -
+        name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GOLANG_VERSION }}
+      -
+        name: Build meta
+        id: build-meta
+        run: |
+          set -x
+          images='ghcr.io/amoniacou/mailgun-operator'
+          commit_sha=${{ github.sha }}
+          commit_date=$(git log -1 --pretty=format:'%ad' --date short "${commit_sha}")
+          tag="${GITHUB_REF#refs/tags/v}"
+
+          # use git describe to get the nearest tag and use that to build the version (e.g. 1.4.0+dev24 or 1.4.0)
+          commit_version=$(git describe --tags --match 'v*' "${commit_sha}"| sed -e 's/^v//; s/-g[0-9a-f]\+$//; s/-\([0-9]\+\)$/+dev\1/')
+          commit_short=$(git rev-parse --short "${commit_sha}")
+          echo "IMAGES=${images}" >> $GITHUB_ENV
+          echo "DATE=${commit_date}" >> $GITHUB_ENV
+          echo "version=${commit_version}" >> $GITHUB_OUTPUT
+          echo "COMMIT=${commit_short}" >> $GITHUB_ENV
+      -
+        name: Set GoReleaser environment
+        run: |
+          echo GOPATH=$(go env GOPATH) >> $GITHUB_ENV
+          echo PWD=$(pwd) >> $GITHUB_ENV
+      -
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          DATE: ${{ env.DATE }}
+          COMMIT: ${{ env.COMMIT }}
+          VERSION: ${{ steps.build-meta.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Docker meta
+        id: docker-meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.IMAGES }}
+          tags: |
+            type=semver,pattern={{version}}
+      -
+        name: Detect platforms
+        id: docker-platforms
+        run: |
+          # Keep in mind that adding more platforms (architectures) will increase the building
+          # time even if we use the ghcache for the building process.
+          platforms="linux/amd64,linux/arm64"
+          echo "PLATFORMS=${platforms}" >> $GITHUB_ENV
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: ${{ env.PLATFORMS }}
+      -
+        name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Build and push
+        id: build
+        uses: docker/build-push-action@v3.2.0
+        with:
+          platforms: ${{ env.PLATFORMS }}
+          context: .
+          push: true
+          build-args: |
+            VERSION=${{ steps.build-meta.outputs.version }}
+          tags: ${{ steps.docker-meta.outputs.tags }}
