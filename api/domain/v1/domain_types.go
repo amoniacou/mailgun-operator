@@ -63,9 +63,8 @@ type DomainSpec struct {
 	Wildcard           *bool          `json:"wildcard,omitempty"`
 	// +kubebuilder:validation:MinItems=0
 	// +listType=set
-	IPS          []string            `json:"ips,omitempty"`
-	SpamAction   *mailgun.SpamAction `json:"spam_action,omitempty"`
-	SMTPPassword *string             `json:"smtp_password,omitempty"`
+	IPS        []string            `json:"ips,omitempty"`
+	SpamAction *mailgun.SpamAction `json:"spam_action,omitempty"`
 }
 
 // DomainStatus defines the observed state of Domain

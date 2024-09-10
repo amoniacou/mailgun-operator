@@ -111,9 +111,9 @@ var _ = BeforeSuite(func() {
 	By("start mailgun fake server")
 	// start mailgun server
 	mgm = utils.NewMailgunServer(validApiToken)
-	utils.PrettyPrint(map[string]interface{}{
-		"mg": mgm,
-	})
+	// utils.PrettyPrint(map[string]interface{}{
+	// 	"mg": mgm,
+	// })
 	fmt.Printf("mailgun mock server url: %s\n", mgm.URL())
 
 	// start manager

@@ -168,10 +168,10 @@ func (m *MailgunMockServer) verifyDomain(w http.ResponseWriter, r *http.Request)
 			if activateDomain {
 				m.domainList[i].Domain.State = activeState
 			}
-			for j, _ := range domain.ReceivingDNSRecords {
+			for j := range domain.ReceivingDNSRecords {
 				m.domainList[i].ReceivingDNSRecords[j].Valid = validDNS
 			}
-			for j, _ := range domain.SendingDNSRecords {
+			for j := range domain.SendingDNSRecords {
 				m.domainList[i].SendingDNSRecords[j].Valid = validDNS
 			}
 			toJSON(w, map[string]interface{}{
@@ -249,14 +249,13 @@ func (m *MailgunMockServer) newMGDomainFor(domainName string) mailgun.Domain {
 	}
 
 	return mailgun.Domain{
-		CreatedAt:    mailgun.RFC2822Time(time.Now().UTC()),
-		Name:         domainName,
-		SMTPLogin:    "postmaster@mailgun.test",
-		SMTPPassword: "smtp_password",
-		Wildcard:     true,
-		SpamAction:   mailgun.SpamActionDisabled,
-		State:        activeDomain,
-		WebScheme:    "http",
+		CreatedAt:  mailgun.RFC2822Time(time.Now().UTC()),
+		Name:       domainName,
+		SMTPLogin:  "postmaster@mailgun.test",
+		Wildcard:   true,
+		SpamAction: mailgun.SpamActionDisabled,
+		State:      activeDomain,
+		WebScheme:  "http",
 	}
 }
 

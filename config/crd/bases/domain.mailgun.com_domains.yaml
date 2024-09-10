@@ -62,8 +62,6 @@ spec:
               secretName:
                 description: Secret where creds to Mailgun is stored
                 type: string
-              smtp_password:
-                type: string
               spam_action:
                 type: string
               web_scheme:

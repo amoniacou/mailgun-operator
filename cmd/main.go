@@ -38,6 +38,7 @@ import (
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	domaincontroller "github.com/amoniacou/mailgun-operator/internal/controller/domain"
+	"github.com/amoniacou/mailgun-operator/internal/versions"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -77,6 +78,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	setupLog.Info("Mailgun Operator", "version", versions.Version, "build", versions.Info.Commit)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will

@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -120,60 +119,8 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	} else {
 		// The object is being deleted
 		if controllerutil.ContainsFinalizer(mailgunDomain, finalizerName) {
-			// our finalizer is present, so lets handle any external dependency
-			r.Recorder.Eventf(mailgunDomain, "Normal", "DeletingDomain",
-				"Deleting domain %s from mailgun", domainName,
-			)
-
-			if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS {
-				// lets get the dns enpoint
-				dnsEndpoint := &endpoint.DNSEndpoint{}
-				dnsEndpointLookup := types.NamespacedName{
-					Name:      mailgunDomain.Status.DnsEntrypoint.Name,
-					Namespace: mailgunDomain.Status.DnsEntrypoint.Namespace,
-				}
-				if err := r.Get(ctx, dnsEndpointLookup, dnsEndpoint); err != nil {
-					log.Error(err, "unable to fetch linked Endpoint", "endpoint", mailgunDomain.Status.DnsEntrypoint)
-					return ctrl.Result{}, err
-				}
-				if err := r.Delete(ctx, dnsEndpoint); err != nil {
-					log.Error(err, "unable to delete linked Endpoint", "endpoint", dnsEndpointLookup)
-					mailgunDomain.Status.MailgunError = fmt.Sprintf(
-						"Unable to delete DNS endpoint %s: %v",
-						mailgunDomain.Status.DnsEntrypoint.Name,
-						err,
-					)
-					if err := r.Update(ctx, mailgunDomain); err != nil {
-						return ctrl.Result{}, err
-					}
-				} else {
-					r.Recorder.Eventf(mailgunDomain, "Normal", "DeletedEndpoint",
-						"Deleted linked Endpoint %s from DNS", dnsEndpointLookup,
-					)
-					mailgunDomain.Status.DnsEntrypoint = corev1.ObjectReference{}
-					if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-						return ctrl.Result{}, err
-					}
-				}
-			}
-			if err := mg.DeleteDomain(ctx, domainName); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried.
-				log.Error(err, "Unable to delete domain from mailgun")
-				r.Recorder.Eventf(mailgunDomain, "Warning", "DeletingDomainFailed",
-					"Deleting domain %s from mailgun is failed", domainName,
-				)
-				mailgunDomain.Status.State = domainv1.DomainFailed
-				mailgunDomain.Status.MailgunError = err.Error()
-				if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-					return ctrl.Result{}, err
-				}
-				return ctrl.Result{}, err
-			}
-
-			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(mailgunDomain, finalizerName)
-			if err := r.Update(ctx, mailgunDomain); err != nil {
+			err = r.deleteDomain(ctx, mailgunDomain, mg)
+			if err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -297,16 +244,10 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 	records := slices.Concat(mailgunDomain.Status.ReceivingDnsRecords, mailgunDomain.Status.SendingDnsRecords)
 
 	for _, record := range records {
-		entryName := fmt.Sprintf("%s-", domainName)
 		dnsName := record.Name
 		target := record.Value
 		// sending record
-		if record.RecordType != "MX" {
-			subdomainPart := strings.Split(record.Name, "."+domainName)[0]
-			entryName += strings.ReplaceAll(subdomainPart, ".", "")
-		} else {
-			subdomainPart := strings.Split(record.Value, ".mailgun.org")[0]
-			entryName += strings.ReplaceAll(subdomainPart, ".", "")
+		if record.RecordType == "MX" {
 			dnsName = domainName
 			target = fmt.Sprintf("%s %s", record.Priority, record.Value)
 		}
@@ -378,6 +319,69 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 	domain.Status.SendingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.SendingDNSRecords)
 	domain.Status.ReceivingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.ReceivingDNSRecords)
 	domain.Status.DomainState = domainResponse.Domain.State
+	return nil
+}
+
+// func Delete Domain helper
+func (r *DomainReconciler) deleteDomain(ctx context.Context, domain *domainv1.Domain, mg *mailgun.MailgunImpl) error {
+	log := log.FromContext(ctx)
+	domainName := domain.Spec.Domain
+	// our finalizer is present, so lets handle any external dependency
+	r.Recorder.Eventf(domain, "Normal", "DeletingDomain",
+		"Deleting domain %s from mailgun", domainName,
+	)
+
+	if domain.Spec.ExternalDNS != nil && *domain.Spec.ExternalDNS {
+		// lets get the dns enpoint
+		dnsEndpoint := &endpoint.DNSEndpoint{}
+		dnsEndpointLookup := types.NamespacedName{
+			Name:      domain.Status.DnsEntrypoint.Name,
+			Namespace: domain.Status.DnsEntrypoint.Namespace,
+		}
+		if err := r.Get(ctx, dnsEndpointLookup, dnsEndpoint); err != nil {
+			log.Error(err, "unable to fetch linked Endpoint", "endpoint", domain.Status.DnsEntrypoint)
+			return err
+		}
+		if err := r.Delete(ctx, dnsEndpoint); err != nil {
+			log.Error(err, "unable to delete linked Endpoint", "endpoint", dnsEndpointLookup)
+			domain.Status.MailgunError = fmt.Sprintf(
+				"Unable to delete DNS endpoint %s: %v",
+				domain.Status.DnsEntrypoint.Name,
+				err,
+			)
+			if err := r.Update(ctx, domain); err != nil {
+				return err
+			}
+		} else {
+			r.Recorder.Eventf(domain, "Normal", "DeletedEndpoint",
+				"Deleted linked Endpoint %s from DNS", dnsEndpointLookup,
+			)
+			domain.Status.DnsEntrypoint = corev1.ObjectReference{}
+			if err := r.Status().Update(ctx, domain); err != nil {
+				return err
+			}
+		}
+	}
+	if err := mg.DeleteDomain(ctx, domainName); err != nil {
+		// if fail to delete the external dependency here, return with error
+		// so that it can be retried.
+		log.Error(err, "Unable to delete domain from mailgun")
+		r.Recorder.Eventf(domain, "Warning", "DeletingDomainFailed",
+			"Deleting domain %s from mailgun is failed", domainName,
+		)
+		domain.Status.State = domainv1.DomainFailed
+		domain.Status.MailgunError = err.Error()
+		if err := r.Status().Update(ctx, domain); err != nil {
+			return err
+		}
+		return err
+	}
+
+	// remove our finalizer from the list and update it.
+	controllerutil.RemoveFinalizer(domain, finalizerName)
+	if err := r.Update(ctx, domain); err != nil {
+		return err
+	}
 	return nil
 }
 
