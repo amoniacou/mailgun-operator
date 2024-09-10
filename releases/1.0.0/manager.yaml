@@ -257,7 +257,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-controller-manager
+  name: mailgun-controller-manager
   namespace: mailgun-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -266,7 +266,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-leader-election-role
+  name: mailgun-leader-election-role
   namespace: mailgun-operator-system
 rules:
 - apiGroups:
@@ -307,7 +307,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-domain-domain-editor-role
+  name: mailgun-domain-domain-editor-role
 rules:
 - apiGroups:
   - domain.mailgun.com
@@ -334,7 +334,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-domain-domain-viewer-role
+  name: mailgun-domain-domain-viewer-role
 rules:
 - apiGroups:
   - domain.mailgun.com
@@ -357,7 +357,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-domain-webhook-editor-role
+  name: mailgun-domain-webhook-editor-role
 rules:
 - apiGroups:
   - domain.mailgun.com
@@ -384,7 +384,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-domain-webhook-viewer-role
+  name: mailgun-domain-webhook-viewer-role
 rules:
 - apiGroups:
   - domain.mailgun.com
@@ -404,7 +404,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mailgun-operator-manager-role
+  name: mailgun-manager-role
 rules:
 - apiGroups:
   - ""
@@ -462,7 +462,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mailgun-operator-metrics-auth-role
+  name: mailgun-metrics-auth-role
 rules:
 - apiGroups:
   - authentication.k8s.io
@@ -480,7 +480,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mailgun-operator-metrics-reader
+  name: mailgun-metrics-reader
 rules:
 - nonResourceURLs:
   - /metrics
@@ -493,15 +493,15 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-leader-election-rolebinding
+  name: mailgun-leader-election-rolebinding
   namespace: mailgun-operator-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: mailgun-operator-leader-election-role
+  name: mailgun-leader-election-role
 subjects:
 - kind: ServiceAccount
-  name: mailgun-operator-controller-manager
+  name: mailgun-controller-manager
   namespace: mailgun-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -510,27 +510,27 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
-  name: mailgun-operator-manager-rolebinding
+  name: mailgun-manager-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mailgun-operator-manager-role
+  name: mailgun-manager-role
 subjects:
 - kind: ServiceAccount
-  name: mailgun-operator-controller-manager
+  name: mailgun-controller-manager
   namespace: mailgun-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mailgun-operator-metrics-auth-rolebinding
+  name: mailgun-metrics-auth-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mailgun-operator-metrics-auth-role
+  name: mailgun-metrics-auth-role
 subjects:
 - kind: ServiceAccount
-  name: mailgun-operator-controller-manager
+  name: mailgun-controller-manager
   namespace: mailgun-operator-system
 ---
 apiVersion: v1
@@ -540,7 +540,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
     control-plane: controller-manager
-  name: mailgun-operator-controller-manager-metrics-service
+  name: mailgun-controller-manager-metrics-service
   namespace: mailgun-operator-system
 spec:
   ports:
@@ -558,7 +558,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/name: mailgun-operator
     control-plane: controller-manager
-  name: mailgun-operator-controller-manager
+  name: mailgun-controller-manager
   namespace: mailgun-operator-system
 spec:
   replicas: 1
@@ -607,5 +607,5 @@ spec:
             - ALL
       securityContext:
         runAsNonRoot: true
-      serviceAccountName: mailgun-operator-controller-manager
+      serviceAccountName: mailgun-controller-manager
       terminationGracePeriodSeconds: 10
