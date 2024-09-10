@@ -13,6 +13,6 @@ LABEL summary="$SUMMARY" \
       release="1"
 
 WORKDIR /
-USER nonroot:nonroot
-COPY --chown=nonroot:nonroot --chmod=0755 dist/manager_linux_${TARGETARCH}*/manager .
+USER 65532:65532
+COPY --chown=65532:65532 --chmod=0755 dist/manager_linux_${TARGETARCH}*/manager .
 ENTRYPOINT ["/manager"]
