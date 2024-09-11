@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -18,16 +19,16 @@ var (
 )
 
 type Data struct {
-	APIToken             string
-	OperatorNamespace    string `json:"operator_namespace,omitempty"`
-	APITokenSecret       string `json:"api_token,omitempty"`
+	OperatorNamespace    string
+	APIToken             string `json:"api_token,omitempty"`
 	DomainVerifyDuration int    `json:"domain_verification_timeout,omitempty"`
 }
 
 func NewConfiguration() *Data {
 	return &Data{
-		OperatorNamespace: "mailgun-operator-system",
-		APIToken:          "",
+		OperatorNamespace:    "mailgun-operator-system",
+		DomainVerifyDuration: 300, // 5 minutes
+		APIToken:             "",
 	}
 }
 
@@ -57,48 +58,7 @@ func (d *Data) LoadConfiguration(ctx context.Context, client client.Client, conf
 	}
 
 	if len(configData) > 0 {
-		count := reflect.TypeOf(configData).Elem().NumField()
-		for i := 0; i < count; i++ {
-			field := reflect.TypeOf(configData).Elem().Field(i)
-			key := field.Tag.Get("json")
-			if key == "" {
-				continue
-			}
-
-			// Initialize value with default
-			var value string
-
-			valueField := reflect.ValueOf(configData).Elem().FieldByName(field.Name)
-			switch valueField.Kind() {
-			case reflect.Int:
-				value = strconv.Itoa(int(valueField.Int()))
-
-			case reflect.String:
-				value = valueField.String()
-			default:
-				value = valueField.String()
-			}
-
-			switch t := field.Type; t.Kind() {
-			case reflect.String:
-				reflect.ValueOf(d).Elem().FieldByName(field.Name).SetString(value)
-			case reflect.Int:
-				intValue, err := strconv.ParseInt(value, 10, 0)
-				if err != nil {
-					configurationLog.Info(
-						"Skipping configuration value due to invalid type",
-						"field", field.Name, "value", value, "error", err)
-				}
-				reflect.ValueOf(d).Elem().FieldByName(field.Name).SetInt(intValue)
-			default:
-				errMsg := fmt.Sprintf("field %s, type %s, kind %s is not parsed",
-					field.Name,
-					t.String(),
-					t.Kind())
-				panic(errMsg)
-			}
-
-		}
+		hashToConfig(d, configData)
 	}
 
 	return nil
@@ -135,4 +95,39 @@ func readSecret(ctx context.Context, c client.Client, namespace, secretName stri
 		return nil, err
 	}
 	return secret.Data, nil
+}
+
+func hashToConfig(d *Data, configData map[string]string) {
+	count := reflect.TypeOf(d).Elem().NumField()
+	for i := 0; i < count; i++ {
+		field := reflect.TypeOf(d).Elem().Field(i)
+		key := field.Tag.Get("json")
+
+		if key == "" {
+			continue
+		} else {
+			key = strings.Split(key, ",")[0]
+		}
+
+		if _, ok := configData[key]; !ok {
+			continue
+		}
+
+		value := configData[key]
+
+		switch t := field.Type; t.Kind() {
+		case reflect.String:
+			reflect.ValueOf(d).Elem().FieldByName(field.Name).SetString(value)
+		case reflect.Int:
+			intValue, err := strconv.ParseInt(value, 10, 0)
+			if err != nil {
+				errMsg := fmt.Sprintf("field %s, type %s, kind %s is not parsed",
+					field.Name,
+					t.String(),
+					t.Kind())
+				panic(errMsg)
+			}
+			reflect.ValueOf(d).Elem().FieldByName(field.Name).SetInt(intValue)
+		}
+	}
 }
