@@ -18,6 +18,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"os"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	"github.com/amoniacou/mailgun-operator/internal/configuration"
 	domaincontroller "github.com/amoniacou/mailgun-operator/internal/controller/domain"
 	"github.com/amoniacou/mailgun-operator/internal/versions"
 	// +kubebuilder:scaffold:imports
@@ -61,6 +63,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var configMapName string
+	var secretName string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -71,6 +75,8 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&configMapName, "config-map-name", "", "The name of the ConfigMap containing operator configuration")
+	flag.StringVar(&secretName, "secret-name", "", "The name of the Secret containing operator configuration")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -152,6 +158,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := ctrl.SetupSignalHandler()
+
+	config := configuration.NewConfiguration()
+
+	if namespace, ok := os.LookupEnv("OPERATOR_NAMESPACE"); ok {
+		config.OperatorNamespace = namespace
+	} else {
+		setupLog.Error(errors.New("OPERATOR_NAMESPACE is not set"), "required environment variable OPERATOR_NAMESPACE is missing")
+		os.Exit(1)
+	}
+
+	err = config.LoadConfiguration(ctx, mgr.GetClient(), configMapName, secretName)
+	if err != nil {
+		setupLog.Error(err, "unable to load configuration")
+		os.Exit(1)
+	}
+
 	if err = (&domaincontroller.DomainReconciler{
 		Client:               mgr.GetClient(),
 		Scheme:               mgr.GetScheme(),
@@ -173,7 +196,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
