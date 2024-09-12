@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,6 +22,7 @@ var (
 type Data struct {
 	OperatorNamespace    string
 	APIToken             string `json:"api_token,omitempty"`
+	APIServer            string `json:"api_server,omitempty"`
 	DomainVerifyDuration int    `json:"domain_verification_timeout,omitempty"`
 }
 
@@ -29,6 +31,7 @@ func NewConfiguration() *Data {
 		OperatorNamespace:    "mailgun-operator-system",
 		DomainVerifyDuration: 300, // 5 minutes
 		APIToken:             "",
+		APIServer:            mailgun.APIBaseEU,
 	}
 }
 
@@ -62,6 +65,21 @@ func (d *Data) LoadConfiguration(ctx context.Context, client client.Client, conf
 	}
 
 	return nil
+}
+
+func (d *Data) MailgunClient(domainName string) *mailgun.MailgunImpl {
+	mg := mailgun.NewMailgun(domainName, d.APIToken)
+
+	switch d.APIServer {
+	case "EU":
+		mg.SetAPIBase(mailgun.APIBaseEU)
+	case "US":
+		mg.SetAPIBase(mailgun.APIBaseUS)
+	default:
+		mg.SetAPIBase(d.APIServer)
+	}
+
+	return mg
 }
 
 func readConfigMap(ctx context.Context, c client.Client, namespace, configMapName string) (map[string]string, error) {

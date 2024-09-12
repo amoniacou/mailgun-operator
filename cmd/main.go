@@ -21,7 +21,6 @@ import (
 	"errors"
 	"flag"
 	"os"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -176,10 +175,10 @@ func main() {
 	}
 
 	if err = (&domaincontroller.DomainReconciler{
-		Client:               mgr.GetClient(),
-		Scheme:               mgr.GetScheme(),
-		Recorder:             mgr.GetEventRecorderFor("mailgun-controller"),
-		DomainVerifyDuration: time.Minute * 5, // By default we wait for 5 minutes to verify the domain
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("mailgun-controller"),
+		Config:   config,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Domain")
 		os.Exit(1)

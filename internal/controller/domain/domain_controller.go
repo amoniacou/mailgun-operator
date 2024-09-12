@@ -18,7 +18,6 @@ package domain
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -35,6 +34,7 @@ import (
 	"sigs.k8s.io/external-dns/endpoint"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	"github.com/amoniacou/mailgun-operator/internal/configuration"
 	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,9 +48,9 @@ const (
 // DomainReconciler reconciles a Domain object
 type DomainReconciler struct {
 	client.Client
-	Scheme               *runtime.Scheme
-	Recorder             record.EventRecorder
-	DomainVerifyDuration time.Duration
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
+	Config   *configuration.Data
 }
 
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains,verbs=get;list;watch;create;update;patch;delete
@@ -81,29 +81,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	domainName := mailgunDomain.Spec.Domain
 
-	// get mailgun API key from secret
-	apiKey, err := r.getDomainAPIKey(ctx, req, mailgunDomain)
-
-	// if no secret than just fail
-	if err != nil {
-		mailgunDomain.Status.State = domainv1.DomainFailed
-		mailgunDomain.Status.MailgunError = err.Error()
-		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-			log.Error(err, "unable to update Domain status")
-		}
-		return ctrl.Result{}, err
-	}
-
-	// setup mailgun client
-	mg := mailgun.NewMailgun(domainName, apiKey)
-	switch mailgunDomain.Spec.APIServer {
-	case "EU":
-		mg.SetAPIBase(mailgun.APIBaseEU)
-	case "US":
-		mg.SetAPIBase(mailgun.APIBaseUS)
-	default:
-		mg.SetAPIBase(mailgunDomain.Spec.APIServer)
-	}
+	mg := r.Config.MailgunClient(domainName)
 
 	// examine DeletionTimestamp to determine if object is under deletion
 	if mailgunDomain.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -119,8 +97,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	} else {
 		// The object is being deleted
 		if controllerutil.ContainsFinalizer(mailgunDomain, finalizerName) {
-			err = r.deleteDomain(ctx, mailgunDomain, mg)
-			if err != nil {
+			if err := r.deleteDomain(ctx, mailgunDomain, mg); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -183,7 +160,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		return ctrl.Result{
-			RequeueAfter: r.DomainVerifyDuration,
+			RequeueAfter: time.Duration(r.Config.DomainVerifyDuration),
 		}, nil
 	}
 
@@ -211,7 +188,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	return ctrl.Result{
-		RequeueAfter: r.DomainVerifyDuration,
+		RequeueAfter: time.Duration(r.Config.DomainVerifyDuration),
 	}, nil
 }
 
@@ -276,31 +253,6 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 		return err
 	}
 	return nil
-}
-
-// Get Domain API key
-func (r *DomainReconciler) getDomainAPIKey(
-	ctx context.Context, req ctrl.Request, domain *domainv1.Domain,
-) (string, error) {
-	if len(domain.Spec.SecretName) == 0 {
-		return "", errors.New("secret not defined")
-	}
-	log := log.FromContext(ctx)
-	var secret corev1.Secret
-	if err := r.Get(ctx, client.ObjectKey{Namespace: req.Namespace, Name: domain.Spec.SecretName}, &secret); err != nil {
-		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).
-			Error(err, "Unable to get API key secret")
-		return "", err
-	}
-
-	if _, ok := secret.Data["api-key"]; !ok {
-		err := errors.New("no api-key key inside secret")
-		log.WithValues("domain", domain.Spec.Domain, "secretName", domain.Spec.SecretName).
-			Error(err, "Unable to get API key secret")
-		return "", err
-	}
-
-	return string(secret.Data["api-key"]), nil
 }
 
 // Create Domain helper

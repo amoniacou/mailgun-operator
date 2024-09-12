@@ -177,43 +177,6 @@ var _ = Describe("Domain Controller", func() {
 			Expect(createdDODomain.Status.MailgunError).ToNot(BeEmpty())
 		})
 
-		It("should fail domain if we unable to open secret", func() {
-			namespace := newFakeNamespace()
-			Expect(namespace).ToNot(BeNil())
-			domainName := "failed-secret.com"
-			doDomain := newDigitalOceanDomain(namespace, domainName, true)
-			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
-			createdDODomain := &domainv1.Domain{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
-				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainFailed
-				}
-				return false
-			}, timeout, interval).Should(BeTrue())
-
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainFailed))
-			Expect(createdDODomain.Status.MailgunError).To(Equal("Secret \"failedSecret\" not found"))
-		})
-
-		It("should fail if secret exist, but no api key", func() {
-			namespace := newFakeNamespace()
-			Expect(namespace).ToNot(BeNil())
-			domainName := "second-failed-secret.com"
-			doDomain := newDigitalOceanDomain(namespace, domainName, true)
-			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
-			createdDODomain := &domainv1.Domain{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
-				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainFailed
-				}
-				return false
-			}, timeout, interval).Should(BeTrue())
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainFailed))
-			Expect(createdDODomain.Status.MailgunError).To(Equal("no api-key key inside secret"))
-		})
-
 		It("should not remove finalizer if unable to remove domain from mailgun", func() {
 			namespace := newFakeNamespace()
 			Expect(namespace).ToNot(BeNil())

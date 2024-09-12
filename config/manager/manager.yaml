@@ -10,14 +10,7 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: controller-manager
-data: {}
----
-apiVersion: v1
-kind: Secret
-type: Opaque
-metadata:
-  name: controller-manager
+  name: controller-manager-config
 data: {}
 ---
 apiVersion: apps/v1

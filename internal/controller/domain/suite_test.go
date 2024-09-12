@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -37,6 +36,7 @@ import (
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	entrypointv1alpha "github.com/amoniacou/mailgun-operator/api/external_dns/v1alpha1"
+	"github.com/amoniacou/mailgun-operator/internal/configuration"
 	"github.com/amoniacou/mailgun-operator/internal/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,8 +55,8 @@ var k8sManager ctrl.Manager
 var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
-
 var mgm *utils.MailgunMockServer
+var operatorConfig *configuration.Data
 
 const (
 	validApiToken string = "valid-token"
@@ -99,22 +99,25 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	// start reconciler
-	err = (&DomainReconciler{
-		Client:               k8sManager.GetClient(),
-		Scheme:               k8sManager.GetScheme(),
-		Recorder:             k8sManager.GetEventRecorderFor("domain-controller"),
-		DomainVerifyDuration: time.Second * 5, // In tests we wait 5 seconds
-	}).SetupWithManager(k8sManager)
-	Expect(err).ToNot(HaveOccurred())
-
 	By("start mailgun fake server")
 	// start mailgun server
 	mgm = utils.NewMailgunServer(validApiToken)
-	// utils.PrettyPrint(map[string]interface{}{
-	// 	"mg": mgm,
-	// })
-	fmt.Printf("mailgun mock server url: %s\n", mgm.URL())
+
+	operatorConfig = &configuration.Data{
+		OperatorNamespace:    "default",
+		APIToken:             validApiToken,
+		APIServer:            mgm.URL(),
+		DomainVerifyDuration: 5,
+	}
+
+	// start reconciler
+	err = (&DomainReconciler{
+		Client:   k8sManager.GetClient(),
+		Scheme:   k8sManager.GetScheme(),
+		Recorder: k8sManager.GetEventRecorderFor("domain-controller"),
+		Config:   operatorConfig,
+	}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
 
 	// start manager
 	go func() {
@@ -169,62 +172,15 @@ func newFakeNamespace() string {
 	return name
 }
 
-func newApiKeySecret(namespace string) *corev1.Secret {
-	name := "secret-" + rand.String(10)
-	secret := &corev1.Secret{
-		Type: corev1.SecretTypeOpaque,
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Data: map[string][]byte{
-			"api-key": []byte(validApiToken),
-		},
-	}
-	err := k8sClient.Create(context.Background(), secret)
-	Expect(err).ToNot(HaveOccurred())
-
-	return secret
-}
-
-func newBrokenKeySecret(namespace string) *corev1.Secret {
-	name := "secret-" + rand.String(10)
-	secret := &corev1.Secret{
-		Type: corev1.SecretTypeOpaque,
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Data: map[string][]byte{
-			"api-key-broken": []byte(validApiToken),
-		},
-	}
-	err := k8sClient.Create(context.Background(), secret)
-	Expect(err).ToNot(HaveOccurred())
-
-	return secret
-}
-
 func newDigitalOceanDomain(namespace, domainName string, externalDNS bool) *domainv1.Domain {
 	name := "domain-" + rand.String(10)
-	secretName := "failedSecret"
-	if domainName != "failed-secret.com" {
-		secret := newApiKeySecret(namespace)
-		secretName = secret.Name
-	}
-	if domainName == "second-failed-secret.com" {
-		secret := newBrokenKeySecret(namespace)
-		secretName = secret.Name
-	}
 	manager := &domainv1.Domain{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
 		Spec: domainv1.DomainSpec{
-			Domain:     domainName,
-			SecretName: secretName,
-			APIServer:  mgm.URL(),
+			Domain: domainName,
 		},
 	}
 

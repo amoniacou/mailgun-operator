@@ -49,11 +49,6 @@ const (
 type DomainSpec struct {
 	// Domain is a domain name which we need to create on Mailgun
 	Domain string `json:"domain"`
-	// MailgunServer
-	// +kubebuilder:default:=EU
-	APIServer string `json:"api_server"`
-	// Secret where creds to Mailgun is stored
-	SecretName string `json:"secretName"`
 	// Support for External-DNS
 	ExternalDNS *bool `json:"external_dns,omitempty"`
 	// See https://documentation.mailgun.com/en/latest/api-domains.html#domains
