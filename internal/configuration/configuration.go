@@ -15,6 +15,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=list;get
+// +kubebuilder:rbac:groups="",resources=configmap,verbs=list;get
+
 var (
 	configurationLog = ctrl.Log.WithName("configuration")
 )

@@ -57,7 +57,6 @@ type DomainReconciler struct {
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=list;get;watch
 // +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
