@@ -1,0 +1,616 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+    control-plane: controller-manager
+  name: mailgun-operator-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: domains.domain.mailgun.com
+spec:
+  group: domain.mailgun.com
+  names:
+    kind: Domain
+    listKind: DomainList
+    plural: domains
+    singular: domain
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: Domain is the Schema for the domains API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DomainSpec defines the desired state of Domain
+            properties:
+              dkim_key_size:
+                type: integer
+              domain:
+                description: Domain is a domain name which we need to create on Mailgun
+                type: string
+              external_dns:
+                description: Support for External-DNS
+                type: boolean
+              force_dkim_authority:
+                type: boolean
+              ips:
+                items:
+                  type: string
+                minItems: 0
+                type: array
+                x-kubernetes-list-type: set
+              spam_action:
+                type: string
+              web_scheme:
+                description: See https://documentation.mailgun.com/en/latest/api-domains.html#domains
+                type: string
+              wildcard:
+                type: boolean
+            required:
+            - domain
+            type: object
+          status:
+            description: DomainStatus defines the observed state of Domain
+            properties:
+              dns_entrypoint:
+                description: A pointer to ExternalDNS Entrypoint
+                properties:
+                  apiVersion:
+                    description: API version of the referent.
+                    type: string
+                  fieldPath:
+                    description: |-
+                      If referring to a piece of an object instead of an entire object, this string
+                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                      For example, if the object reference is to a container within a pod, this would take on a value like:
+                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                      the event) or if no container name is specified "spec.containers[2]" (container with
+                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                      referencing a part of an object.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the referent.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                    type: string
+                  name:
+                    description: |-
+                      Name of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                    type: string
+                  resourceVersion:
+                    description: |-
+                      Specific resourceVersion to which this reference is made, if any.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the referent.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              domain_state:
+                description: State of the domain on Mailgun
+                type: string
+              external_dns_state:
+                description: State of ExternalDNS if enabled
+                type: string
+              last_domain_validation_time:
+                description: Time when we last time requested a Validation of domain
+                  on Mailgun
+                format: date-time
+                type: string
+              mailgun_error:
+                description: Mailgun errors
+                type: string
+              not_managed:
+                type: boolean
+              receiving_dns_records:
+                description: list of DNS records for receiving emails
+                items:
+                  properties:
+                    name:
+                      type: string
+                    priority:
+                      type: string
+                    record_type:
+                      type: string
+                    valid:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - record_type
+                  - valid
+                  - value
+                  type: object
+                type: array
+              sending_dns_records:
+                description: list of DNS records for sending emails
+                items:
+                  properties:
+                    name:
+                      type: string
+                    priority:
+                      type: string
+                    record_type:
+                      type: string
+                    valid:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - record_type
+                  - valid
+                  - value
+                  type: object
+                type: array
+              state:
+                description: Global state of the record
+                type: string
+            required:
+            - domain_state
+            - state
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: webhooks.domain.mailgun.com
+spec:
+  group: domain.mailgun.com
+  names:
+    kind: Webhook
+    listKind: WebhookList
+    plural: webhooks
+    singular: webhook
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: Webhook is the Schema for the webhooks API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WebhookSpec defines the desired state of Webhook
+            properties:
+              foo:
+                description: Foo is an example field of Webhook. Edit webhook_types.go
+                  to remove/update
+                type: string
+            type: object
+          status:
+            description: WebhookStatus defines the observed state of Webhook
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-controller-manager
+  namespace: mailgun-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-leader-election-role
+  namespace: mailgun-operator-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-domain-domain-editor-role
+rules:
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-domain-domain-viewer-role
+rules:
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-domain-webhook-editor-role
+rules:
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - webhooks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - webhooks/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-domain-webhook-viewer-role
+rules:
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - webhooks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - webhooks/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mailgun-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmap
+  - secrets
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - domains/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - externaldns.k8s.io
+  resources:
+  - dnsendpoints
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mailgun-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mailgun-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-leader-election-rolebinding
+  namespace: mailgun-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mailgun-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: mailgun-controller-manager
+  namespace: mailgun-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+  name: mailgun-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mailgun-manager-role
+subjects:
+- kind: ServiceAccount
+  name: mailgun-controller-manager
+  namespace: mailgun-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mailgun-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mailgun-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: mailgun-controller-manager
+  namespace: mailgun-operator-system
+---
+apiVersion: v1
+data: {}
+kind: ConfigMap
+metadata:
+  name: mailgun-controller-manager-config
+  namespace: mailgun-operator-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+    control-plane: controller-manager
+  name: mailgun-controller-manager-metrics-service
+  namespace: mailgun-operator-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mailgun-operator
+    control-plane: controller-manager
+  name: mailgun-controller-manager
+  namespace: mailgun-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --metrics-bind-address=:8443
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --config-map-name=mailgun-controller-manager-config
+        - --secret-name=mailgun-controller-manager-config
+        command:
+        - /manager
+        env:
+        - name: OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        image: ghcr.io/amoniacou/mailgun-operator:1.1.1
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        runAsNonRoot: true
+      serviceAccountName: mailgun-controller-manager
+      terminationGracePeriodSeconds: 10
