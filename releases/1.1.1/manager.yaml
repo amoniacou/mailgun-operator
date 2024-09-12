@@ -400,7 +400,7 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmap
+  - configmaps
   - secrets
   verbs:
   - get
