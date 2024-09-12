@@ -56,7 +56,7 @@ type DomainReconciler struct {
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=domain.mailgun.com,resources=domains/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
-// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;create;update;patch;delete
+// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;create;update;patch;delete;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -213,6 +213,7 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 
 	records := slices.Concat(mailgunDomain.Status.ReceivingDnsRecords, mailgunDomain.Status.SendingDnsRecords)
 
+	mxRecords := []string{}
 	for _, record := range records {
 		// skip the already valid records. Looks like they already have been created on DNS so no need to create again
 		if record.Valid == "valid" {
@@ -222,10 +223,15 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 		target := record.Value
 		// sending record
 		if record.RecordType == "MX" {
-			dnsName = domainName
-			target = fmt.Sprintf("%s %s", record.Priority, record.Value)
+			mxRecords = append(mxRecords, fmt.Sprintf("%s %s", record.Priority, record.Value))
+		} else {
+			dnsRecordEndpoint := endpoint.NewEndpoint(dnsName, record.RecordType, target)
+			dnsEntrypoint.Spec.Endpoints = append(dnsEntrypoint.Spec.Endpoints, dnsRecordEndpoint)
 		}
-		dnsRecordEndpoint := endpoint.NewEndpoint(dnsName, record.RecordType, target)
+	}
+
+	if len(mxRecords) > 0 {
+		dnsRecordEndpoint := endpoint.NewEndpoint(domainName, "MX", mxRecords...)
 		dnsEntrypoint.Spec.Endpoints = append(dnsEntrypoint.Spec.Endpoints, dnsRecordEndpoint)
 	}
 
