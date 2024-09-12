@@ -79,6 +79,8 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	domainName := mailgunDomain.Spec.Domain
 
+	log.V(1).Info("Start to reconcile domain", "domain", domainName)
+
 	mg := r.Config.MailgunClient(domainName)
 
 	// examine DeletionTimestamp to determine if object is under deletion
@@ -104,6 +106,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// If its a new domain we should create it on mailgun and update status
 	if len(mailgunDomain.Status.State) == 0 {
 		// Set domain as processing
+		log.V(1).Info("Change status to processing", "domain", domainName)
 		mailgunDomain.Status.State = domainv1.DomainProcessing
 
 		// Update status
@@ -113,6 +116,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		// try to search domain on Mailgun
+		log.V(1).Info("Get domain from mailgun", "domain", domainName)
 		_, err := mg.GetDomain(ctx, domainName)
 		if err == nil {
 			errorMgs := "Domain already exists on Mailgun"
@@ -130,6 +134,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, nil
 		}
 
+		log.V(1).Info("Create domain on mailgun", "domain", domainName)
 		err = r.createDomain(ctx, mailgunDomain, mg)
 		if err != nil {
 			log.Error(err, "Unable to create domain on mailgun")
@@ -151,6 +156,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS {
+			log.V(1).Info("Create external dns records", "domain", domainName)
 			err := r.createExternalDNSEntity(ctx, mailgunDomain)
 			if err != nil {
 				return ctrl.Result{}, err
@@ -158,25 +164,29 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		return ctrl.Result{
-			RequeueAfter: time.Duration(r.Config.DomainVerifyDuration),
+			RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
 		}, nil
 	}
 
 	// its not a new record and a new tick of the loop
-
 	if mailgunDomain.Status.State == domainv1.DomainFailed {
+		log.V(1).Info("Domain state failed - no continue", "domain", domainName)
 		// if the state is failed and we have an error message, return it
 		return ctrl.Result{}, nil
 	}
 
 	// verify domain
+	log.V(1).Info("Call a verifying domain on mailgun", "domain", domainName)
 	status, err := mg.VerifyDomain(ctx, domainName)
 	if err != nil {
 		log.Error(err, "unable to verify domain", "domain", domainName)
-		return ctrl.Result{}, err
+		return ctrl.Result{
+			RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
+		}, err
 	}
 
 	if status == "active" {
+		log.V(1).Info("Domain activated on mailgun", "domain", domainName)
 		mailgunDomain.Status.State = domainv1.DomainActivated
 		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 			log.Error(err, "unable to update Domain status")
@@ -185,8 +195,10 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	log.V(1).Info("Domain is activated on mailgun - calling for a next tick", "domain", domainName)
+
 	return ctrl.Result{
-		RequeueAfter: time.Duration(r.Config.DomainVerifyDuration),
+		RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
 	}, nil
 }
 

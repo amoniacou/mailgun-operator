@@ -70,6 +70,7 @@ spec:
             - --leader-elect
             - --health-probe-bind-address=:8081
             - --config-map-name=$(OPERATOR_DEPLOYMENT_NAME)-config
+            - --zap-log-level=1
             - --secret-name=$(OPERATOR_DEPLOYMENT_NAME)-config
           env:
             - name: OPERATOR_NAMESPACE
