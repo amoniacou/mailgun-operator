@@ -16,7 +16,7 @@ import (
 )
 
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=list;get
-// +kubebuilder:rbac:groups="",resources=configmap,verbs=list;get
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=list;get
 
 var (
 	configurationLog = ctrl.Log.WithName("configuration")
