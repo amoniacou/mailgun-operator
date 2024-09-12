@@ -30,6 +30,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -164,11 +165,22 @@ func main() {
 	if namespace, ok := os.LookupEnv("OPERATOR_NAMESPACE"); ok {
 		config.OperatorNamespace = namespace
 	} else {
-		setupLog.Error(errors.New("OPERATOR_NAMESPACE is not set"), "required environment variable OPERATOR_NAMESPACE is missing")
+		setupLog.Error(errors.New("OPERATOR_NAMESPACE is not set"),
+			"required environment variable OPERATOR_NAMESPACE is missing")
 		os.Exit(1)
 	}
 
-	err = config.LoadConfiguration(ctx, mgr.GetClient(), configMapName, secretName)
+	// kubeClient is the kubernetes client set with
+	// support for the apiextensions that is used
+	// during the initialization of the operator
+	// kubeClient client.Client
+	kubeClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes client")
+		os.Exit(1)
+	}
+
+	err = config.LoadConfiguration(ctx, kubeClient, configMapName, secretName)
 	if err != nil {
 		setupLog.Error(err, "unable to load configuration")
 		os.Exit(1)
