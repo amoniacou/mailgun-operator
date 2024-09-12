@@ -284,7 +284,7 @@ func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords
 			},
 			{
 				RecordType: "CNAME",
-				Valid:      "valid",
+				Valid:      dnsValid,
 				Name:       "email." + domainName,
 				Value:      "mailgun.org",
 			},

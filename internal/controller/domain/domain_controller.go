@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ref "k8s.io/client-go/tools/reference"
@@ -211,15 +210,14 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 			Endpoints: []*endpoint.Endpoint{},
 		},
 	}
-	dnsEntrypoint.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "externaldns.k8s.io",
-		Version: "v1alpha1",
-		Kind:    "DNSEndpoint",
-	})
 
 	records := slices.Concat(mailgunDomain.Status.ReceivingDnsRecords, mailgunDomain.Status.SendingDnsRecords)
 
 	for _, record := range records {
+		// skip the already valid records. Looks like they already have been created on DNS so no need to create again
+		if record.Valid == "valid" {
+			continue
+		}
 		dnsName := record.Name
 		target := record.Value
 		// sending record
@@ -282,7 +280,8 @@ func (r *DomainReconciler) deleteDomain(ctx context.Context, domain *domainv1.Do
 		"Deleting domain %s from mailgun", domainName,
 	)
 
-	if domain.Spec.ExternalDNS != nil && *domain.Spec.ExternalDNS {
+	// if we have a linked dns entrypoint then we should to delete it.
+	if len(domain.Status.DnsEntrypoint.Name) > 0 {
 		// lets get the dns enpoint
 		dnsEndpoint := &endpoint.DNSEndpoint{}
 		dnsEndpointLookup := types.NamespacedName{
