@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	entrypointv1alpha "github.com/amoniacou/mailgun-operator/api/external_dns/v1alpha1"
 	"github.com/amoniacou/mailgun-operator/internal/configuration"
 	domaincontroller "github.com/amoniacou/mailgun-operator/internal/controller/domain"
 	"github.com/amoniacou/mailgun-operator/internal/versions"
@@ -53,6 +54,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(domainv1.AddToScheme(scheme))
+	utilruntime.Must(entrypointv1alpha.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
