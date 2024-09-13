@@ -175,6 +175,11 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	if mailgunDomain.Status.State == domainv1.DomainActivated {
+		log.V(1).Info("Domain state activated - no continue", "domain", domainName)
+		return ctrl.Result{}, nil
+	}
+
 	// verify domain
 	log.V(1).Info("Call a verifying domain on mailgun", "domain", domainName)
 	status, err := mg.VerifyDomain(ctx, domainName)
@@ -185,8 +190,10 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}, err
 	}
 
+	log.V(1).Info("Domain verification result", "domain", domainName, "status", status)
+
 	if status == "active" {
-		log.V(1).Info("Domain activated on mailgun", "domain", domainName)
+		log.V(1).Info("Domain is activated on mailgun", "domain", domainName, "status", status)
 		mailgunDomain.Status.State = domainv1.DomainActivated
 		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 			log.Error(err, "unable to update Domain status")
@@ -195,7 +202,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	log.V(1).Info("Domain is activated on mailgun - calling for a next tick", "domain", domainName)
+	log.V(1).Info("Domain is not activated on mailgun - calling for a next tick", "domain", domainName)
 
 	return ctrl.Result{
 		RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
