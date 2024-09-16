@@ -385,8 +385,6 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 
 	options.Password = password
 
-	// enable debug for a while
-	mailgun.Debug = true
 	domainResponse, err := mg.CreateDomain(ctx, domain.Spec.Domain, &options)
 	if err != nil {
 		log.Error(err, "unable to create mailgun domain", "response", domainResponse)
