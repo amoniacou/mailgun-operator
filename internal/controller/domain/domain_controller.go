@@ -373,24 +373,30 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Domain, mg *mailgun.MailgunImpl) error {
 	log := log.FromContext(ctx)
 	options := mailgun.CreateDomainOptions{}
-	if domain.Spec.DKIMKeySize != nil {
+	if domain.Spec.DKIMKeySize != nil && *domain.Spec.DKIMKeySize > 0 {
 		options.DKIMKeySize = *domain.Spec.DKIMKeySize
 	}
-	if domain.Spec.ForceDKIMAuthority != nil {
-		options.ForceDKIMAuthority = *domain.Spec.ForceDKIMAuthority
+	if domain.Spec.ForceDKIMAuthority != nil && *domain.Spec.ForceDKIMAuthority {
+		options.ForceDKIMAuthority = true
 	}
 	if domain.Spec.SpamAction != nil && len(*domain.Spec.SpamAction) > 0 {
 		options.SpamAction = *domain.Spec.SpamAction
 	}
-	if domain.Spec.Wildcard != nil {
-		options.Wildcard = *domain.Spec.Wildcard
+	if domain.Spec.Wildcard != nil && *domain.Spec.Wildcard {
+		options.Wildcard = true
 	}
 	// Generate a random password
-	options.Password, _ = utils.RandomHex(32)
+	password, err := utils.RandomHex(32)
+	if err != nil {
+		log.Error(err, "unable to generate random password")
+		return err
+	}
+
+	options.Password = password
 
 	domainResponse, err := mg.CreateDomain(ctx, domain.Spec.Domain, &options)
 	if err != nil {
-		log.Error(err, "unable to create mailgun domain")
+		log.Error(err, "unable to create mailgun domain", "response", domainResponse)
 		return err
 	}
 	domain.Status.SendingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.SendingDNSRecords)
@@ -446,20 +452,26 @@ func (r *DomainReconciler) deleteDomain(ctx context.Context, domain *domainv1.Do
 			"Deleted linked Endpoint %s from DNS", dnsEndpointLookup,
 		)
 	}
-	if err := mg.DeleteDomain(ctx, domainName); err != nil {
-		// if fail to delete the external dependency here, return with error
-		// so that it can be retried.
-		log.Error(err, "Unable to delete domain from mailgun")
-		r.Recorder.Eventf(domain, "Warning", "DeletingDomainFailed",
-			"Deleting domain %s from mailgun is failed", domainName,
-		)
-		domain.Status.State = domainv1.DomainStateFailed
-		errMsg := fmt.Sprintf("Unable to delete domain: %v", err)
-		domain.Status.MailgunError = &errMsg
-		if err := r.Status().Update(ctx, domain); err != nil {
+	// check if domain is exists
+	_, err := mg.GetDomain(ctx, domainName)
+	if err != nil {
+		log.V(1).Info("Mailgun domain already deleted")
+	} else {
+		if err := mg.DeleteDomain(ctx, domainName); err != nil {
+			// if fail to delete the external dependency here, return with error
+			// so that it can be retried.
+			log.Error(err, "Unable to delete domain from mailgun")
+			r.Recorder.Eventf(domain, "Warning", "DeletingDomainFailed",
+				"Deleting domain %s from mailgun is failed", domainName,
+			)
+			domain.Status.State = domainv1.DomainStateFailed
+			errMsg := fmt.Sprintf("Unable to delete domain: %v", err)
+			domain.Status.MailgunError = &errMsg
+			if err := r.Status().Update(ctx, domain); err != nil {
+				return err
+			}
 			return err
 		}
-		return err
 	}
 
 	// remove our finalizer from the list and update it.
