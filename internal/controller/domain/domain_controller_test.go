@@ -249,7 +249,7 @@ var _ = Describe("Domain Controller", func() {
 			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
 			Expect(createdDODomain.Finalizers).ToNot(BeEmpty())
 
-			mgm.DeleteDomain(domainName)
+			mgm.FailedDomain(domainName)
 
 			err := k8sClient.Delete(ctx, doDomain)
 			Expect(err).ToNot(HaveOccurred())

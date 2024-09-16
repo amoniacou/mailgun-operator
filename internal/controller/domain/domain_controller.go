@@ -100,21 +100,12 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			if err := r.deleteDomain(ctx, mailgunDomain, mg); err != nil {
 				return ctrl.Result{}, err
 			}
+			return ctrl.Result{}, nil
 		}
 	}
 
 	// If its a new domain we should create it on mailgun and update status
 	if len(mailgunDomain.Status.State) == 0 {
-		// Set domain as processing
-		log.V(1).Info("Change status to processing", "domain", domainName)
-		mailgunDomain.Status.State = domainv1.DomainStateProcessing
-
-		// Update status
-		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-			log.Error(err, "unable to update Domain status")
-			return ctrl.Result{}, err
-		}
-
 		// try to search domain on Mailgun
 		log.V(1).Info("Get domain from mailgun", "domain", domainName)
 		_, err := mg.GetDomain(ctx, domainName)
@@ -149,24 +140,6 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		mailgunDomain.Status.State = domainv1.DomainStateCreated
-
-		// update status with records
-		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-			log.Error(err, "unable to update Domain status")
-			return ctrl.Result{}, err
-		}
-
-		if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS && !mailgunDomain.Status.DnsEntrypointCreated {
-			log.V(1).Info("Create external dns records", "domain", domainName)
-			err := r.createExternalDNSEntity(ctx, mailgunDomain)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
-		return ctrl.Result{
-			RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
-		}, nil
 	}
 
 	// we should to try create external DNS records if they are not created yet
@@ -181,6 +154,20 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// No need to continue if domain already failed or activated
 	if mailgunDomain.Status.State == domainv1.DomainStateFailed || mailgunDomain.Status.State == domainv1.DomainStateActivated {
 		log.V(1).Info("Domain state check", "domain", domainName, "state", mailgunDomain.Status.State)
+		return ctrl.Result{}, nil
+	}
+
+	// try to search domain on Mailgun
+	log.V(1).Info("Get domain from mailgun before verification", "domain", domainName)
+	_, err := mg.GetDomain(ctx, domainName)
+	if err != nil {
+		log.Error(err, "unable to get domain from mailgun", "domain", domainName)
+		mailgunDomain.Status.State = domainv1.DomainStateFailed
+		errorMessage := "Domain not found on Mailgun"
+		mailgunDomain.Status.MailgunError = &errorMessage
+		if err := r.Client.Status().Update(ctx, mailgunDomain); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -220,17 +207,21 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if mailgunDomain.Status.State != domainv1.DomainStateActivated {
 			log.V(1).Info("Domain is not activated on mailgun - calling for a next tick", "domain", domainName)
 
+			// Store the status
+			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+				log.Error(err, "unable to update Domain status")
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{
 				RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
 			}, nil
 		}
+	}
 
-		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-			log.Error(err, "unable to update Domain status")
-			return ctrl.Result{}, err
-		}
-
-		return ctrl.Result{}, nil
+	// Store the status
+	if err := r.Status().Update(ctx, mailgunDomain); err != nil {
+		log.Error(err, "unable to update Domain status")
+		return ctrl.Result{}, err
 	}
 
 	log.V(1).Info("Domain is not activated on mailgun - calling for a next tick", "domain", domainName)
