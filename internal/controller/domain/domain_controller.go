@@ -25,7 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	ref "k8s.io/client-go/tools/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -34,6 +33,7 @@ import (
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	"github.com/amoniacou/mailgun-operator/internal/configuration"
+	"github.com/amoniacou/mailgun-operator/internal/utils"
 	"github.com/mailgun/mailgun-go/v4"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -107,7 +107,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if len(mailgunDomain.Status.State) == 0 {
 		// Set domain as processing
 		log.V(1).Info("Change status to processing", "domain", domainName)
-		mailgunDomain.Status.State = domainv1.DomainProcessing
+		mailgunDomain.Status.State = domainv1.DomainStateProcessing
 
 		// Update status
 		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
@@ -125,8 +125,8 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 				"Domain %s is already exists on mailgun", domainName,
 			)
 			mailgunDomain.Status.NotManaged = true
-			mailgunDomain.Status.State = domainv1.DomainFailed
-			mailgunDomain.Status.MailgunError = errorMgs
+			mailgunDomain.Status.State = domainv1.DomainStateFailed
+			mailgunDomain.Status.MailgunError = &errorMgs
 			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 				log.Error(err, "unable to update Domain status")
 				return ctrl.Result{}, err
@@ -138,8 +138,9 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		err = r.createDomain(ctx, mailgunDomain, mg)
 		if err != nil {
 			log.Error(err, "Unable to create domain on mailgun")
-			mailgunDomain.Status.State = domainv1.DomainFailed
-			mailgunDomain.Status.MailgunError = err.Error()
+			mailgunDomain.Status.State = domainv1.DomainStateFailed
+			mailgunError := err.Error()
+			mailgunDomain.Status.MailgunError = &mailgunError
 			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 				log.Error(err, "unable to update Domain status")
 				return ctrl.Result{}, err
@@ -147,7 +148,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, nil
 		}
 
-		mailgunDomain.Status.State = domainv1.DomainCreated
+		mailgunDomain.Status.State = domainv1.DomainStateCreated
 
 		// update status with records
 		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
@@ -155,7 +156,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 
-		if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS {
+		if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS && !mailgunDomain.Status.DnsEntrypointCreated {
 			log.V(1).Info("Create external dns records", "domain", domainName)
 			err := r.createExternalDNSEntity(ctx, mailgunDomain)
 			if err != nil {
@@ -168,21 +169,24 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}, nil
 	}
 
-	// its not a new record and a new tick of the loop
-	if mailgunDomain.Status.State == domainv1.DomainFailed {
-		log.V(1).Info("Domain state failed - no continue", "domain", domainName)
-		// if the state is failed and we have an error message, return it
+	// we should to try create external DNS records if they are not created yet
+	if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS && !mailgunDomain.Status.DnsEntrypointCreated {
+		log.V(1).Info("Create external dns records", "domain", domainName)
+		err := r.createExternalDNSEntity(ctx, mailgunDomain)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// No need to continue if domain already failed or activated
+	if mailgunDomain.Status.State == domainv1.DomainStateFailed || mailgunDomain.Status.State == domainv1.DomainStateActivated {
+		log.V(1).Info("Domain state check", "domain", domainName, "state", mailgunDomain.Status.State)
 		return ctrl.Result{}, nil
 	}
 
-	if mailgunDomain.Status.State == domainv1.DomainActivated {
-		log.V(1).Info("Domain state activated - no continue", "domain", domainName)
-		return ctrl.Result{}, nil
-	}
-
-	// verify domain
+	// trying to verify domain on Mailgun
 	log.V(1).Info("Call a verifying domain on mailgun", "domain", domainName)
-	status, err := mg.VerifyDomain(ctx, domainName)
+	mailgunStatus, err := mg.VerifyDomain(ctx, domainName)
 	if err != nil {
 		log.Error(err, "unable to verify domain", "domain", domainName)
 		return ctrl.Result{
@@ -190,15 +194,42 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}, err
 	}
 
-	log.V(1).Info("Domain verification result", "domain", domainName, "status", status)
+	log.V(1).Info("Domain verification result", "domain", domainName, "status", mailgunStatus)
 
-	if status == "active" {
-		log.V(1).Info("Domain is activated on mailgun", "domain", domainName, "status", status)
-		mailgunDomain.Status.State = domainv1.DomainActivated
+	// Update last validation time and count
+	// Such info for now just to understanding the counts and last validation time
+	mailgunDomain.Status.LastDomainValidationTime = &metav1.Time{Time: time.Now()}
+	if mailgunDomain.Status.DomainValidationCount == nil {
+		mailgunDomain.Status.DomainValidationCount = new(int)
+		*mailgunDomain.Status.DomainValidationCount = 0
+	}
+	*mailgunDomain.Status.DomainValidationCount++
+
+	// Mailgun returns "active" if the domain is verified and ready for sending emails
+	if mailgunStatus == "active" {
+		log.V(1).Info("Domain is activated on mailgun for sending", "domain", domainName, "status", mailgunStatus)
+
+		// Check if we need to force MX check
+		if mailgunDomain.Spec.ForceMXCheck != nil && *mailgunDomain.Spec.ForceMXCheck {
+			r.checkMXRecordsAndSetState(ctx, mg, mailgunDomain)
+		} else {
+			mailgunDomain.Status.State = domainv1.DomainStateActivated
+		}
+
+		// If domain is not activated and we need to force MX checks - we need to requeue after some time
+		if mailgunDomain.Status.State != domainv1.DomainStateActivated {
+			log.V(1).Info("Domain is not activated on mailgun - calling for a next tick", "domain", domainName)
+
+			return ctrl.Result{
+				RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
+			}, nil
+		}
+
 		if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 			log.Error(err, "unable to update Domain status")
 			return ctrl.Result{}, err
 		}
+
 		return ctrl.Result{}, nil
 	}
 
@@ -216,6 +247,77 @@ func (r *DomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// export SMTP credentials to a given Secret
+func (r *DomainReconciler) exportCredentialsToSecret(ctx context.Context, domain *domainv1.Domain, mg *mailgun.MailgunImpl, login, password string) error {
+	log := log.FromContext(ctx)
+	log.V(1).Info("Exporting SMTP credentials to a Secret")
+	secret := &corev1.Secret{}
+	secretLookupKey := types.NamespacedName{Namespace: domain.Namespace, Name: *domain.Spec.ExportSecretName}
+
+	log.V(1).Info("Checking if secret already exists", "secret", *domain.Spec.ExportSecretName)
+	err := r.Client.Get(ctx, secretLookupKey, secret)
+	// we not get secret by some other reason (not found), we should return an error
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("error getting secret: %w", err)
+		} else {
+			log.V(1).Info("Creating new secret", "secret", *domain.Spec.ExportSecretName)
+			secret = &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      *domain.Spec.ExportSecretName,
+					Namespace: domain.Namespace,
+				},
+				Data: map[string][]byte{},
+			}
+		}
+	} else {
+		log.V(1).Info("Secret already exists", "secret", *domain.Spec.ExportSecretName)
+	}
+
+	// default export keys
+	passwordKey := "smtp-password"
+	loginKey := "smtp-login"
+
+	if domain.Spec.ExportSecretPasswordKey != nil && len(*domain.Spec.ExportSecretPasswordKey) > 0 {
+		passwordKey = *domain.Spec.ExportSecretPasswordKey
+	}
+	if domain.Spec.ExportSecretLoginKey != nil && len(*domain.Spec.ExportSecretLoginKey) > 0 {
+		loginKey = *domain.Spec.ExportSecretLoginKey
+	}
+
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+
+		secret.Data[passwordKey] = []byte(password)
+		secret.Data[loginKey] = []byte(login)
+		return nil
+	}); err != nil {
+		log.Error(err, "unable to create or update secret", "secret", secret.Name)
+		return err
+	}
+	return nil
+}
+
+// check the MX records state and set the state of domain
+func (r *DomainReconciler) checkMXRecordsAndSetState(ctx context.Context, mg *mailgun.MailgunImpl, mailgunDomain *domainv1.Domain) {
+	log := log.FromContext(ctx)
+	domainResponse, err := mg.GetDomain(ctx, mailgunDomain.Spec.Domain)
+	if err != nil {
+		log.Error(err, "unable to get domain from mailgun")
+		return
+	}
+	for _, record := range domainResponse.ReceivingDNSRecords {
+		if record.Valid != "valid" {
+			log.V(1).Info("MX record is not valid", "record", record.RecordType, "value", record.Value)
+		}
+	}
+	log.V(1).Info("All MX records are valid", "domain", mailgunDomain.Spec.Domain)
+	mailgunDomain.Status.State = domainv1.DomainStateActivated
+}
+
+// create external DNS entity for the domain
 func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunDomain *domainv1.Domain) error {
 	log := log.FromContext(ctx)
 	domainName := mailgunDomain.Spec.Domain
@@ -254,22 +356,12 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 		dnsEntrypoint.Spec.Endpoints = append(dnsEntrypoint.Spec.Endpoints, dnsRecordEndpoint)
 	}
 
-	if err := ctrl.SetControllerReference(mailgunDomain, dnsEntrypoint, r.Scheme); err != nil {
-		log.Error(err, "unable to construct new DNSEndpoint", "domain", domainName)
-		return err
-	}
-
 	if err := r.Create(ctx, dnsEntrypoint); err != nil {
 		log.Error(err, "unable to create DNSEndpoint!", "entrypoint", dnsEntrypoint)
 		return err
 	}
-	entrypointRef, err := ref.GetReference(r.Scheme, dnsEntrypoint)
-	if err != nil {
-		log.Error(err, "unable to make a reference to DNSEntrypoint", "entrypoint", dnsEntrypoint)
-		return err
-	}
 
-	mailgunDomain.Status.DnsEntrypoint = *entrypointRef
+	mailgunDomain.Status.DnsEntrypointCreated = true
 	if err := r.Status().Update(ctx, mailgunDomain); err != nil {
 		log.Error(err, "unable to update Domain status")
 		return err
@@ -279,6 +371,7 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 
 // Create Domain helper
 func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Domain, mg *mailgun.MailgunImpl) error {
+	log := log.FromContext(ctx)
 	options := mailgun.CreateDomainOptions{}
 	if domain.Spec.DKIMKeySize != nil {
 		options.DKIMKeySize = *domain.Spec.DKIMKeySize
@@ -286,13 +379,35 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 	if domain.Spec.ForceDKIMAuthority != nil {
 		options.ForceDKIMAuthority = *domain.Spec.ForceDKIMAuthority
 	}
+	if domain.Spec.SpamAction != nil && len(*domain.Spec.SpamAction) > 0 {
+		options.SpamAction = *domain.Spec.SpamAction
+	}
+	if domain.Spec.Wildcard != nil {
+		options.Wildcard = *domain.Spec.Wildcard
+	}
+	// Generate a random password
+	options.Password, _ = utils.RandomHex(32)
+
 	domainResponse, err := mg.CreateDomain(ctx, domain.Spec.Domain, &options)
 	if err != nil {
+		log.Error(err, "unable to create mailgun domain")
 		return err
 	}
 	domain.Status.SendingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.SendingDNSRecords)
 	domain.Status.ReceivingDnsRecords = mgDNSRecordsToDnsRecords(domainResponse.ReceivingDNSRecords)
 	domain.Status.DomainState = domainResponse.Domain.State
+	if domain.Spec.ExportCredentials != nil && *domain.Spec.ExportCredentials {
+		err := r.exportCredentialsToSecret(ctx, domain, mg, domainResponse.Domain.SMTPLogin, options.Password)
+
+		if err != nil {
+			log.Error(err, "unable to export credentials to secret")
+			return err
+		}
+	}
+	if err := r.Status().Update(ctx, domain); err != nil {
+		log.Error(err, "unable to update Domain status")
+		return err
+	}
 	return nil
 }
 
@@ -305,37 +420,31 @@ func (r *DomainReconciler) deleteDomain(ctx context.Context, domain *domainv1.Do
 		"Deleting domain %s from mailgun", domainName,
 	)
 
-	// if we have a linked dns entrypoint then we should to delete it.
-	if len(domain.Status.DnsEntrypoint.Name) > 0 {
-		// lets get the dns enpoint
-		dnsEndpoint := &endpoint.DNSEndpoint{}
-		dnsEndpointLookup := types.NamespacedName{
-			Name:      domain.Status.DnsEntrypoint.Name,
-			Namespace: domain.Status.DnsEntrypoint.Namespace,
-		}
-		if err := r.Get(ctx, dnsEndpointLookup, dnsEndpoint); err != nil {
-			log.Error(err, "unable to fetch linked Endpoint", "endpoint", domain.Status.DnsEntrypoint)
+	// lets get the dns enpoint
+	dnsEndpoint := &endpoint.DNSEndpoint{}
+	dnsEndpointLookup := types.NamespacedName{
+		Name:      domain.Name,
+		Namespace: domain.Namespace,
+	}
+	if err := r.Get(ctx, dnsEndpointLookup, dnsEndpoint); client.IgnoreNotFound(err) != nil {
+		log.Error(err, "unable to fetch linked Endpoint")
+		return err
+	}
+	if err := r.Delete(ctx, dnsEndpoint); err != nil {
+		log.Error(err, "unable to delete linked Endpoint", "endpoint", dnsEndpointLookup)
+		errMsg := fmt.Sprintf(
+			"Unable to delete DNS endpoint %s: %v",
+			domain.Name,
+			err,
+		)
+		domain.Status.MailgunError = &errMsg
+		if err := r.Update(ctx, domain); err != nil {
 			return err
 		}
-		if err := r.Delete(ctx, dnsEndpoint); err != nil {
-			log.Error(err, "unable to delete linked Endpoint", "endpoint", dnsEndpointLookup)
-			domain.Status.MailgunError = fmt.Sprintf(
-				"Unable to delete DNS endpoint %s: %v",
-				domain.Status.DnsEntrypoint.Name,
-				err,
-			)
-			if err := r.Update(ctx, domain); err != nil {
-				return err
-			}
-		} else {
-			r.Recorder.Eventf(domain, "Normal", "DeletedEndpoint",
-				"Deleted linked Endpoint %s from DNS", dnsEndpointLookup,
-			)
-			domain.Status.DnsEntrypoint = corev1.ObjectReference{}
-			if err := r.Status().Update(ctx, domain); err != nil {
-				return err
-			}
-		}
+	} else {
+		r.Recorder.Eventf(domain, "Normal", "DeletedEndpoint",
+			"Deleted linked Endpoint %s from DNS", dnsEndpointLookup,
+		)
 	}
 	if err := mg.DeleteDomain(ctx, domainName); err != nil {
 		// if fail to delete the external dependency here, return with error
@@ -344,8 +453,9 @@ func (r *DomainReconciler) deleteDomain(ctx context.Context, domain *domainv1.Do
 		r.Recorder.Eventf(domain, "Warning", "DeletingDomainFailed",
 			"Deleting domain %s from mailgun is failed", domainName,
 		)
-		domain.Status.State = domainv1.DomainFailed
-		domain.Status.MailgunError = err.Error()
+		domain.Status.State = domainv1.DomainStateFailed
+		errMsg := fmt.Sprintf("Unable to delete domain: %v", err)
+		domain.Status.MailgunError = &errMsg
 		if err := r.Status().Update(ctx, domain); err != nil {
 			return err
 		}

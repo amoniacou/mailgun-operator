@@ -18,7 +18,6 @@ package v1
 
 import (
 	"github.com/mailgun/mailgun-go/v4"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -35,14 +34,17 @@ type DnsRecord struct {
 
 type WebSchemeType string
 type DomainState string
+type ExportType string
 
 const (
-	HTTP             WebSchemeType = "http"
-	HTTPS            WebSchemeType = "https"
-	DomainCreated    DomainState   = "created"
-	DomainFailed     DomainState   = "failed"
-	DomainProcessing DomainState   = "processing"
-	DomainActivated  DomainState   = "activated"
+	HTTP                  WebSchemeType = "http"
+	HTTPS                 WebSchemeType = "https"
+	DomainStateCreated    DomainState   = "created"
+	DomainStateFailed     DomainState   = "failed"
+	DomainStateProcessing DomainState   = "processing"
+	DomainStateActivated  DomainState   = "activated"
+	ExportTypeSMTP        ExportType    = "smtp"
+	ExportTypeAPI         ExportType    = "api"
 )
 
 // DomainSpec defines the desired state of Domain
@@ -60,12 +62,31 @@ type DomainSpec struct {
 	// +listType=set
 	IPS        []string            `json:"ips,omitempty"`
 	SpamAction *mailgun.SpamAction `json:"spam_action,omitempty"`
+
+	// Export SMTP or API credentials to a secret
+	ExportCredentials *bool `json:"export_credentials,omitempty"`
+	// Export SMTP credentials to a secret
+	// +kubebuilder:validation:RequiredIf=ExportCredentials==true
+	ExportSecretName *string `json:"export_secret_name,omitempty"`
+	// Export secret key for login
+	// +kubebuilder:validation:RequiredIf=ExportCredentials==true
+	ExportSecretLoginKey *string `json:"export_secret_login_key,omitempty"`
+	// Export secret key for password
+	// +kubebuilder:validation:RequiredIf=ExportCredentials==true
+	ExportSecretPasswordKey *string `json:"export_secret_password_key,omitempty"`
+
+	// Force validation of MX records for receiving mail
+	// +optional
+	ForceMXCheck *bool `json:"force_mx_check,omitempty"`
 }
 
 // DomainStatus defines the observed state of Domain
 type DomainStatus struct {
 	// Global state of the record
 	State DomainState `json:"state"`
+
+	// If domain is not managed by this operator (e.g. created manually)
+	NotManaged bool `json:"not_managed,omitempty"`
 
 	// list of DNS records for sending emails
 	SendingDnsRecords []DnsRecord `json:"sending_dns_records,omitempty"`
@@ -76,19 +97,17 @@ type DomainStatus struct {
 	// State of the domain on Mailgun
 	DomainState string `json:"domain_state"`
 
-	// State of ExternalDNS if enabled
-	ExternalDNSState string `json:"external_dns_state,omitempty"`
-
 	// Mailgun errors
-	MailgunError string `json:"mailgun_error,omitempty"`
+	MailgunError *string `json:"mailgun_error,omitempty"`
 
 	// Time when we last time requested a Validation of domain on Mailgun
 	LastDomainValidationTime *metav1.Time `json:"last_domain_validation_time,omitempty"`
-	NotManaged               bool         `json:"not_managed,omitempty"`
+
+	// Domain validation counts
+	DomainValidationCount *int `json:"validation_count,omitempty"`
 
 	// A pointer to ExternalDNS Entrypoint
-	// +optional
-	DnsEntrypoint corev1.ObjectReference `json:"dns_entrypoint,omitempty"`
+	DnsEntrypointCreated bool `json:"dns_entrypoint_created,omitempty"`
 }
 
 // +kubebuilder:object:root=true

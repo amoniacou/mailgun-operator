@@ -22,7 +22,10 @@ import (
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/external-dns/endpoint"
 )
@@ -47,7 +50,7 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainCreated
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
@@ -56,7 +59,6 @@ var _ = Describe("Domain Controller", func() {
 			Expect(createdDODomain.Status.DomainState).Should(Equal("unverified"))
 			Expect(createdDODomain.Status.ReceivingDnsRecords).Should(HaveLen(2))
 			Expect(createdDODomain.Status.SendingDnsRecords).Should(HaveLen(3))
-			Expect(createdDODomain.Status.DnsEntrypoint.Name).To(BeEmpty())
 		})
 
 		It("should fail to create mailgun domain as its already exists", func() {
@@ -70,13 +72,13 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainFailed
+					return createdDODomain.Status.State == domainv1.DomainStateFailed
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
 			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
 			Expect(createdDODomain.Status.NotManaged).Should(BeTrue())
-			Expect(createdDODomain.Status.MailgunError).Should(Equal("Domain already exists on Mailgun"))
+			Expect(*createdDODomain.Status.MailgunError).Should(Equal("Domain already exists on Mailgun"))
 		})
 
 		It("should create mailgun domain, store DNS records and create external DNS entities", func() {
@@ -90,7 +92,7 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainCreated
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
@@ -99,11 +101,10 @@ var _ = Describe("Domain Controller", func() {
 			Expect(createdDODomain.Status.DomainState).Should(Equal("unverified"))
 			Expect(createdDODomain.Status.ReceivingDnsRecords).Should(HaveLen(2))
 			Expect(createdDODomain.Status.SendingDnsRecords).Should(HaveLen(3))
-			Expect(createdDODomain.Status.DnsEntrypoint).ToNot(BeNil())
 			dnsEndpoint := &endpoint.DNSEndpoint{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name:      createdDODomain.Status.DnsEntrypoint.Name,
-				Namespace: createdDODomain.Status.DnsEntrypoint.Namespace,
+				Name:      createdDODomain.Name,
+				Namespace: createdDODomain.Namespace,
 			}, dnsEndpoint)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dnsEndpoint.Spec.Endpoints).Should(HaveLen(4))
@@ -133,12 +134,12 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainCreated
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
 
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainCreated))
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
 			By("Activate domain on fake mailgun")
 
 			mgm.ActivateDomain(domainName)
@@ -146,11 +147,68 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainActivated
+					return createdDODomain.Status.State == domainv1.DomainStateActivated
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainActivated))
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateActivated))
+		})
+
+		It("should create mailgun domain and change state to activated and force checking MX records", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			domainName := "success-two.com"
+			name := "domain-" + rand.String(10)
+			forceMXChecks := true
+			doDomain := &domainv1.Domain{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: domainv1.DomainSpec{
+					Domain:       domainName,
+					ForceMXCheck: &forceMXChecks,
+				},
+			}
+
+			err := k8sClient.Create(ctx, doDomain)
+			Expect(err).ToNot(HaveOccurred())
+
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
+			By("Activate domain on fake mailgun")
+
+			mgm.ActivateDomain(domainName)
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainStateActivated
+				}
+				return false
+			}, timeout, interval).Should(BeFalse())
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
+			By("Activate mx records on fake mailgun")
+
+			mgm.ActivateMXDomain(domainName)
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainStateActivated
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateActivated))
 		})
 
 		It("should not be able to create mailgun domain if mailgun returns error", func() {
@@ -165,13 +223,13 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainFailed
+					return createdDODomain.Status.State == domainv1.DomainStateFailed
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
 
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainFailed))
-			Expect(createdDODomain.Status.MailgunError).ToNot(BeEmpty())
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateFailed))
+			Expect(*createdDODomain.Status.MailgunError).ToNot(BeEmpty())
 		})
 
 		It("should not remove finalizer if unable to remove domain from mailgun", func() {
@@ -184,11 +242,11 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainCreated
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainCreated))
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
 			Expect(createdDODomain.Finalizers).ToNot(BeEmpty())
 
 			mgm.DeleteDomain(domainName)
@@ -199,12 +257,12 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainFailed
+					return createdDODomain.Status.State == domainv1.DomainStateFailed
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainFailed))
-			Expect(createdDODomain.Status.MailgunError).To(MatchRegexp("UnexpectedResponseError"))
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateFailed))
+			Expect(*createdDODomain.Status.MailgunError).To(MatchRegexp("UnexpectedResponseError"))
 			Expect(createdDODomain.Finalizers).ToNot(BeEmpty())
 		})
 
@@ -218,11 +276,11 @@ var _ = Describe("Domain Controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainCreated
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
 				}
 				return false
 			}, timeout, interval).Should(BeTrue())
-			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainCreated))
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
 			Expect(createdDODomain.Finalizers).ToNot(BeEmpty())
 
 			err := k8sClient.Delete(ctx, doDomain)
@@ -242,5 +300,135 @@ var _ = Describe("Domain Controller", func() {
 			Expect(err).To(HaveOccurred())
 		})
 
+		It("should create domain and export credentials to new secret", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			domainName := "first-cred.com"
+			exportSecretName := "test-secret"
+			name := "domain-" + rand.String(10)
+			exportCred := true
+			doDomain := &domainv1.Domain{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: domainv1.DomainSpec{
+					Domain:            domainName,
+					ExportCredentials: &exportCred,
+					ExportSecretName:  &exportSecretName,
+				},
+			}
+
+			err := k8sClient.Create(ctx, doDomain)
+			Expect(err).ToNot(HaveOccurred())
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
+			secretLoolup := types.NamespacedName{Name: exportSecretName, Namespace: namespace}
+			createdSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, secretLoolup, createdSecret)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(createdSecret.Data["smtp-login"])).To(Equal("postmaster@first-cred.com"))
+			Expect(string(createdSecret.Data["smtp-password"])).ToNot(BeEmpty())
+		})
+
+		It("should create domain and export credentials to existing secret", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			domainName := "second-cred.com"
+			exportSecretName := "exists-secret"
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      exportSecretName,
+					Namespace: namespace,
+				},
+				Data: map[string][]byte{
+					"some-key": []byte("some-value"),
+				},
+			}
+			err := k8sClient.Create(ctx, secret)
+			Expect(err).ToNot(HaveOccurred())
+			name := "domain-" + rand.String(10)
+			exportCred := true
+			doDomain := &domainv1.Domain{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: domainv1.DomainSpec{
+					Domain:            domainName,
+					ExportCredentials: &exportCred,
+					ExportSecretName:  &exportSecretName,
+				},
+			}
+			err = k8sClient.Create(ctx, doDomain)
+			Expect(err).ToNot(HaveOccurred())
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+			secretLoolup := types.NamespacedName{Name: exportSecretName, Namespace: namespace}
+			existSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, secretLoolup, existSecret)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(existSecret.Data["smtp-login"])).To(Equal("postmaster@second-cred.com"))
+			Expect(string(existSecret.Data["smtp-password"])).ToNot(BeEmpty())
+			Expect(string(existSecret.Data["some-key"])).To(Equal("some-value"))
+		})
+
+		It("should create domain and export credentials to new secret with specific keys", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			domainName := "third-cred.com"
+			exportSecretName := "test-secret"
+			name := "domain-" + rand.String(10)
+			exportCred := true
+			myLoginKey := "my-login"
+			myPasswordKey := "my-password"
+			doDomain := &domainv1.Domain{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: domainv1.DomainSpec{
+					Domain:                  domainName,
+					ExportCredentials:       &exportCred,
+					ExportSecretName:        &exportSecretName,
+					ExportSecretLoginKey:    &myLoginKey,
+					ExportSecretPasswordKey: &myPasswordKey,
+				},
+			}
+
+			err := k8sClient.Create(ctx, doDomain)
+			Expect(err).ToNot(HaveOccurred())
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
+			secretLoolup := types.NamespacedName{Name: exportSecretName, Namespace: namespace}
+			createdSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, secretLoolup, createdSecret)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(createdSecret.Data[myLoginKey])).To(Equal("postmaster@third-cred.com"))
+			Expect(string(createdSecret.Data[myPasswordKey])).ToNot(BeEmpty())
+		})
 	})
 })

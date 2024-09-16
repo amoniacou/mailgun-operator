@@ -12,12 +12,13 @@ import (
 )
 
 type MailgunMockServer struct {
-	httpServer    *httptest.Server
-	apiToken      string
-	activeDomains []string
-	failedDomains []string
-	domainList    []mailgun.DomainContainer
-	mutex         sync.Mutex
+	httpServer      *httptest.Server
+	apiToken        string
+	activeDomains   []string
+	activeMXDomains []string
+	failedDomains   []string
+	domainList      []mailgun.DomainContainer
+	mutex           sync.Mutex
 }
 
 const (
@@ -71,6 +72,13 @@ func (m *MailgunMockServer) ActivateDomain(domainName string) {
 	m.mutex.Lock()
 
 	m.activeDomains = append(m.activeDomains, domainName)
+}
+
+func (m *MailgunMockServer) ActivateMXDomain(domainName string) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	m.activeMXDomains = append(m.activeMXDomains, domainName)
 }
 
 func (m *MailgunMockServer) FailedDomain(domainName string) {
@@ -251,7 +259,7 @@ func (m *MailgunMockServer) newMGDomainFor(domainName string) mailgun.Domain {
 	return mailgun.Domain{
 		CreatedAt:  mailgun.RFC2822Time(time.Now().UTC()),
 		Name:       domainName,
-		SMTPLogin:  "postmaster@mailgun.test",
+		SMTPLogin:  "postmaster@" + domainName,
 		Wildcard:   true,
 		SpamAction: mailgun.SpamActionDisabled,
 		State:      activeDomain,
@@ -263,9 +271,14 @@ func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords
 	var records []mailgun.DNSRecord
 
 	dnsValid := unknownDNS
+	mxDnsValid := unknownDNS
 
 	if slices.Contains(m.activeDomains, domainName) {
 		dnsValid = validDNS
+	}
+
+	if slices.Contains(m.activeMXDomains, domainName) && sendingRecords {
+		mxDnsValid = validDNS
 	}
 
 	if sendingRecords {
@@ -294,13 +307,13 @@ func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords
 			{
 				Priority:   "10",
 				RecordType: "MX",
-				Valid:      dnsValid,
+				Valid:      mxDnsValid,
 				Value:      "mxa.mailgun.org",
 			},
 			{
 				Priority:   "10",
 				RecordType: "MX",
-				Valid:      dnsValid,
+				Valid:      mxDnsValid,
 				Value:      "mxb.mailgun.org",
 			},
 		}
