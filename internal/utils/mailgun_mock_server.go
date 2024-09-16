@@ -201,6 +201,13 @@ func (m *MailgunMockServer) deleteDomain(w http.ResponseWriter, r *http.Request)
 	m.mutex.Lock()
 	domainName := r.PathValue("domain")
 
+	if slices.Contains(m.failedDomains, domainName) {
+		toJSON(w, map[string]string{
+			"message": "Failed to create domain due to invalid DNS configuration.",
+		}, http.StatusInternalServerError)
+		return
+	}
+
 	for i, domain := range m.domainList {
 		if domainName == domain.Domain.Name {
 			m.domainList = slices.Delete(m.domainList, i, i+1)
