@@ -142,6 +142,12 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		mailgunDomain.Status.State = domainv1.DomainStateCreated
 	}
 
+	// No need to continue if domain already failed or activated
+	if mailgunDomain.Status.State == domainv1.DomainStateFailed || mailgunDomain.Status.State == domainv1.DomainStateActivated {
+		log.V(1).Info("Domain state check", "domain", domainName, "state", mailgunDomain.Status.State)
+		return ctrl.Result{}, nil
+	}
+
 	// we should to try create external DNS records if they are not created yet
 	if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS && !mailgunDomain.Status.DnsEntrypointCreated {
 		log.V(1).Info("Create external dns records", "domain", domainName)
@@ -149,12 +155,6 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-	}
-
-	// No need to continue if domain already failed or activated
-	if mailgunDomain.Status.State == domainv1.DomainStateFailed || mailgunDomain.Status.State == domainv1.DomainStateActivated {
-		log.V(1).Info("Domain state check", "domain", domainName, "state", mailgunDomain.Status.State)
-		return ctrl.Result{}, nil
 	}
 
 	// try to search domain on Mailgun
@@ -385,6 +385,8 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 
 	options.Password = password
 
+	// enable debug for a while
+	mailgun.Debug = true
 	domainResponse, err := mg.CreateDomain(ctx, domain.Spec.Domain, &options)
 	if err != nil {
 		log.Error(err, "unable to create mailgun domain", "response", domainResponse)
