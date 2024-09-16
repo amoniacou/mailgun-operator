@@ -377,7 +377,7 @@ func (r *DomainReconciler) createDomain(ctx context.Context, domain *domainv1.Do
 		options.Wildcard = true
 	}
 	// Generate a random password
-	password, err := utils.RandomHex(32)
+	password, err := utils.RandomHex(16)
 	if err != nil {
 		log.Error(err, "unable to generate random password")
 		return err
