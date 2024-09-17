@@ -66,7 +66,9 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	// lookup for item
 	if err := r.Get(ctx, req.NamespacedName, mailgunDomain); err != nil {
-		log.Error(err, "unable to fetch Domain")
+		if client.IgnoreNotFound(err) != nil {
+			log.Error(err, "unable to fetch Domain")
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
