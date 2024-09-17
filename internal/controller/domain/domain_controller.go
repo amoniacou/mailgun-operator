@@ -155,7 +155,7 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	// try to search domain on Mailgun
 	log.V(1).Info("Get domain from mailgun before verification", "domain", domainName)
-	_, err := mg.GetDomain(ctx, domainName)
+	resp, err := mg.GetDomain(ctx, domainName)
 	if err != nil {
 		log.Error(err, "unable to get domain from mailgun", "domain", domainName)
 		mailgunDomain.Status.State = domainv1.DomainStateFailed
@@ -166,6 +166,9 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 		return ctrl.Result{}, nil
 	}
+
+	mailgunDomain.Status.ReceivingDnsRecords = mgDNSRecordsToDnsRecords(resp.ReceivingDNSRecords)
+	mailgunDomain.Status.SendingDnsRecords = mgDNSRecordsToDnsRecords(resp.SendingDNSRecords)
 
 	// trying to verify domain on Mailgun
 	log.V(1).Info("Call a verifying domain on mailgun", "domain", domainName)
@@ -178,6 +181,9 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	log.V(1).Info("Domain verification result", "domain", domainName, "status", mailgunStatus)
+
+	// set mailgun status
+	mailgunDomain.Status.DomainState = mailgunStatus
 
 	// Update last validation time and count
 	// Such info for now just to understanding the counts and last validation time
