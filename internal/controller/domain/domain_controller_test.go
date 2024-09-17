@@ -17,6 +17,7 @@ limitations under the License.
 package domain
 
 import (
+	"fmt"
 	"time"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
@@ -189,13 +190,14 @@ var _ = Describe("Domain Controller", func() {
 
 			mgm.ActivateDomain(domainName)
 
-			Eventually(func() bool {
+			Eventually(func() int {
 				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
 				if err == nil {
-					return createdDODomain.Status.State == domainv1.DomainStateActivated
+					By("Domain validation count by " + fmt.Sprintf("%d", *createdDODomain.Status.DomainValidationCount))
+					return *createdDODomain.Status.DomainValidationCount
 				}
-				return false
-			}, timeout, interval).Should(BeFalse())
+				return 0
+			}, timeout, interval).Should(And(SatisfyAll(BeNumerically(">=", 2), BeNumerically("<", 5))))
 			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
 			By("Activate mx records on fake mailgun")
 

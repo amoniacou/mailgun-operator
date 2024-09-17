@@ -112,7 +112,6 @@ type DomainStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
 // Domain is the Schema for the domains API
 type Domain struct {
 	metav1.TypeMeta   `json:",inline"`

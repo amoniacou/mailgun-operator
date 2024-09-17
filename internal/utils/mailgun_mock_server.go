@@ -57,8 +57,8 @@ func (m *MailgunMockServer) AddDomain(domainName string) {
 	m.mutex.Lock()
 	newDomain := m.newMGDomainFor(domainName)
 
-	receiveRecords := m.newMGDnsRecordsFor(domainName, false)
-	sendingRecords := m.newMGDnsRecordsFor(domainName, true)
+	receiveRecords := m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
+	sendingRecords := m.newMGDnsRecordsFor(domainName, true, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
 
 	m.domainList = append(m.domainList, mailgun.DomainContainer{
 		Domain:              newDomain,
@@ -124,8 +124,8 @@ func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request)
 
 	newDomain := m.newMGDomainFor(domainName)
 
-	receiveRecords := m.newMGDnsRecordsFor(domainName, false)
-	sendingRecords := m.newMGDnsRecordsFor(domainName, true)
+	receiveRecords := m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
+	sendingRecords := m.newMGDnsRecordsFor(domainName, true, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
 
 	m.domainList = append(m.domainList, mailgun.DomainContainer{
 		Domain:              newDomain,
@@ -148,11 +148,14 @@ func (m *MailgunMockServer) getDomain(w http.ResponseWriter, r *http.Request) {
 	defer m.mutex.Unlock()
 	m.mutex.Lock()
 	domainName := r.PathValue("domain")
-	for _, domain := range m.domainList {
+	for i, domain := range m.domainList {
 		if domainName == domain.Domain.Name {
+			m.domainList[i].ReceivingDNSRecords = m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
 			toJSON(w, map[string]interface{}{
-				"message": "Domain DNS records have been retrieved",
-				"domain":  domain,
+				"message":               "Domain DNS records have been retrieved",
+				"domain":                m.domainList[i].Domain,
+				"receiving_dns_records": m.domainList[i].ReceivingDNSRecords,
+				"sending_dns_records":   m.domainList[i].SendingDNSRecords,
 			}, http.StatusOK)
 			return
 		}
@@ -274,17 +277,17 @@ func (m *MailgunMockServer) newMGDomainFor(domainName string) mailgun.Domain {
 	}
 }
 
-func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords bool) []mailgun.DNSRecord {
+func (m *MailgunMockServer) newMGDnsRecordsFor(domainName string, sendingRecords, activeDomain, activeMXRecord bool) []mailgun.DNSRecord {
 	var records []mailgun.DNSRecord
 
 	dnsValid := unknownDNS
 	mxDnsValid := unknownDNS
 
-	if slices.Contains(m.activeDomains, domainName) {
+	if activeDomain {
 		dnsValid = validDNS
 	}
 
-	if slices.Contains(m.activeMXDomains, domainName) && sendingRecords {
+	if activeMXRecord {
 		mxDnsValid = validDNS
 	}
 

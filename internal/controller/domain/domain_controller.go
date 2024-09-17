@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/external-dns/endpoint"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
@@ -59,15 +60,6 @@ type DomainReconciler struct {
 // +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;create;update;patch;delete;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Domain object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 	var mailgunDomain = &domainv1.Domain{}
@@ -144,13 +136,16 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	// No need to continue if domain already failed or activated
-	if mailgunDomain.Status.State == domainv1.DomainStateFailed || mailgunDomain.Status.State == domainv1.DomainStateActivated {
+	if mailgunDomain.Status.State == domainv1.DomainStateFailed ||
+		mailgunDomain.Status.State == domainv1.DomainStateActivated {
 		log.V(1).Info("Domain state check", "domain", domainName, "state", mailgunDomain.Status.State)
 		return ctrl.Result{}, nil
 	}
 
 	// we should to try create external DNS records if they are not created yet
-	if mailgunDomain.Spec.ExternalDNS != nil && *mailgunDomain.Spec.ExternalDNS && !mailgunDomain.Status.DnsEntrypointCreated {
+	if mailgunDomain.Spec.ExternalDNS != nil &&
+		*mailgunDomain.Spec.ExternalDNS &&
+		!mailgunDomain.Status.DnsEntrypointCreated {
 		log.V(1).Info("Create external dns records", "domain", domainName)
 		err := r.createExternalDNSEntity(ctx, mailgunDomain)
 		if err != nil {
@@ -203,20 +198,6 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		} else {
 			mailgunDomain.Status.State = domainv1.DomainStateActivated
 		}
-
-		// If domain is not activated and we need to force MX checks - we need to requeue after some time
-		if mailgunDomain.Status.State != domainv1.DomainStateActivated {
-			log.V(1).Info("Domain is not activated on mailgun - calling for a next tick", "domain", domainName)
-
-			// Store the status
-			if err := r.Status().Update(ctx, mailgunDomain); err != nil {
-				log.Error(err, "unable to update Domain status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{
-				RequeueAfter: time.Duration(r.Config.DomainVerifyDuration) * time.Second,
-			}, nil
-		}
 	}
 
 	// Store the status
@@ -234,7 +215,9 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *DomainReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	pred := predicate.GenerationChangedPredicate{}
 	return ctrl.NewControllerManagedBy(mgr).
+		WithEventFilter(pred).
 		For(&domainv1.Domain{}).
 		Complete(r)
 }
@@ -300,9 +283,18 @@ func (r *DomainReconciler) checkMXRecordsAndSetState(ctx context.Context, mg *ma
 		log.Error(err, "unable to get domain from mailgun")
 		return
 	}
+
+	log.V(1).Info("Receiving response from mailgun", "domain", domainResponse.ReceivingDNSRecords)
+
+	if len(domainResponse.ReceivingDNSRecords) == 0 {
+		log.Error(err, "no receiving DNS records for domain in Mailgun response")
+		return
+	}
+
 	for _, record := range domainResponse.ReceivingDNSRecords {
+		log.V(1).Info("Checking MX record", "record", record.RecordType, "value", record.Value, "valid", record.Valid)
 		if record.Valid != "valid" {
-			log.V(1).Info("MX record is not valid", "record", record.RecordType, "value", record.Value)
+			return
 		}
 	}
 	log.V(1).Info("All MX records are valid", "domain", mailgunDomain.Spec.Domain)
