@@ -2,4 +2,5 @@
 resources:
 - domain_v1_domain.yaml
 - domain_v1_webhook.yaml
+- domain_v1_route.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

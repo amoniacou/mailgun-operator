@@ -35,6 +35,7 @@ rules:
   - domain.mailgun.com
   resources:
   - domains
+  - routes
   verbs:
   - create
   - delete
@@ -47,12 +48,14 @@ rules:
   - domain.mailgun.com
   resources:
   - domains/finalizers
+  - routes/finalizers
   verbs:
   - update
 - apiGroups:
   - domain.mailgun.com
   resources:
   - domains/status
+  - routes/status
   verbs:
   - get
   - patch

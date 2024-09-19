@@ -1,0 +1,23 @@
+# permissions for end users to view routes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: mailgun-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: domain-route-viewer-role
+rules:
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - routes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - domain.mailgun.com
+  resources:
+  - routes/status
+  verbs:
+  - get

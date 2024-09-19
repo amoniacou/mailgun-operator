@@ -41,7 +41,7 @@ import (
 )
 
 const (
-	finalizerName    = "domain.mailgun.com/finalizer"
+	domainFinalizer  = "domain.mailgun.com/finalizer"
 	endpointOwnerKey = ".metadata.controller"
 )
 
@@ -83,15 +83,15 @@ func (r *DomainReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then lets add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
-		if !controllerutil.ContainsFinalizer(mailgunDomain, finalizerName) {
-			controllerutil.AddFinalizer(mailgunDomain, finalizerName)
+		if !controllerutil.ContainsFinalizer(mailgunDomain, domainFinalizer) {
+			controllerutil.AddFinalizer(mailgunDomain, domainFinalizer)
 			if err := r.Update(ctx, mailgunDomain); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
 	} else {
 		// The object is being deleted
-		if controllerutil.ContainsFinalizer(mailgunDomain, finalizerName) {
+		if controllerutil.ContainsFinalizer(mailgunDomain, domainFinalizer) {
 			if err := r.deleteDomain(ctx, mailgunDomain, mg); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -467,7 +467,7 @@ func (r *DomainReconciler) deleteDomain(ctx context.Context, domain *domainv1.Do
 	}
 
 	// remove our finalizer from the list and update it.
-	controllerutil.RemoveFinalizer(domain, finalizerName)
+	controllerutil.RemoveFinalizer(domain, domainFinalizer)
 	if err := r.Update(ctx, domain); err != nil {
 		return err
 	}
