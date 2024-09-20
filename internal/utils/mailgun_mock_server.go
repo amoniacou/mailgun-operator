@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/mailgun/mailgun-go/v4"
+	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 type MailgunMockServer struct {
@@ -18,6 +20,8 @@ type MailgunMockServer struct {
 	activeMXDomains []string
 	failedDomains   []string
 	domainList      []mailgun.DomainContainer
+	routes          map[string]mailgun.Route
+	failRoutes      map[string][]string
 	mutex           sync.Mutex
 }
 
@@ -99,6 +103,19 @@ func (m *MailgunMockServer) DeleteDomain(domainName string) {
 	}
 }
 
+func (m *MailgunMockServer) FailRoutes(action, id string) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	if m.failRoutes == nil {
+		m.failRoutes = map[string][]string{}
+	}
+	if _, ok := m.failRoutes[action]; !ok {
+		m.failRoutes[action] = []string{}
+	}
+	m.failRoutes[action] = append(m.failRoutes[action], id)
+}
+
 // Private methods
 
 func (m *MailgunMockServer) initRoutes(mux *http.ServeMux) {
@@ -107,6 +124,10 @@ func (m *MailgunMockServer) initRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v4/domains/{domain}", m.authHandler(m.getDomain))
 	mux.HandleFunc("PUT /v4/domains/{domain}/verify", m.authHandler(m.verifyDomain))
 	mux.HandleFunc("DELETE /v4/domains/{domain}", m.authHandler(m.deleteDomain))
+	mux.HandleFunc("POST /v4/routes", m.authHandler(m.createRoute))
+	mux.HandleFunc("GET /v4/routes/{id}", m.authHandler(m.getRoute))
+	mux.HandleFunc("PUT /v4/routes/{id}", m.authHandler(m.updateRoute))
+	mux.HandleFunc("DELETE /v4/routes/{id}", m.authHandler(m.deleteRoute))
 }
 
 func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request) {
@@ -124,8 +145,18 @@ func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request)
 
 	newDomain := m.newMGDomainFor(domainName)
 
-	receiveRecords := m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
-	sendingRecords := m.newMGDnsRecordsFor(domainName, true, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
+	receiveRecords := m.newMGDnsRecordsFor(
+		domainName,
+		false,
+		slices.Contains(m.activeDomains, domainName),
+		slices.Contains(m.activeMXDomains, domainName),
+	)
+	sendingRecords := m.newMGDnsRecordsFor(
+		domainName,
+		true,
+		slices.Contains(m.activeDomains, domainName),
+		slices.Contains(m.activeMXDomains, domainName),
+	)
 
 	m.domainList = append(m.domainList, mailgun.DomainContainer{
 		Domain:              newDomain,
@@ -150,7 +181,12 @@ func (m *MailgunMockServer) getDomain(w http.ResponseWriter, r *http.Request) {
 	domainName := r.PathValue("domain")
 	for i, domain := range m.domainList {
 		if domainName == domain.Domain.Name {
-			m.domainList[i].ReceivingDNSRecords = m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
+			m.domainList[i].ReceivingDNSRecords = m.newMGDnsRecordsFor(
+				domainName,
+				false,
+				slices.Contains(m.activeDomains, domainName),
+				slices.Contains(m.activeMXDomains, domainName),
+			)
 			toJSON(w, map[string]interface{}{
 				"message":               "Domain DNS records have been retrieved",
 				"domain":                m.domainList[i].Domain,
@@ -223,6 +259,159 @@ func (m *MailgunMockServer) deleteDomain(w http.ResponseWriter, r *http.Request)
 	toJSON(w, map[string]interface{}{
 		"message": "Domain not found",
 	}, http.StatusNotFound)
+}
+
+func (m *MailgunMockServer) createRoute(w http.ResponseWriter, r *http.Request) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	description := r.FormValue("description")
+	if description == "fail" {
+		toJSON(w, map[string]string{
+			"message": "Failed to create route due to invalid expression.",
+		}, http.StatusInternalServerError)
+		return
+	}
+	expression := r.FormValue("expression")
+	priority := r.FormValue("priority")
+	priorityVal := 0
+	if len(priority) > 0 {
+		p, err := strconv.Atoi(priority)
+		if err != nil {
+			toJSON(w, map[string]interface{}{
+				"message": "Invalid priority value",
+			}, http.StatusBadRequest)
+			return
+		}
+		priorityVal = p
+	}
+
+	id := "route-" + rand.String(10)
+
+	newRoute := mailgun.Route{
+		Id:          id,
+		Priority:    priorityVal,
+		Actions:     r.Form["action"],
+		Description: description,
+		Expression:  expression,
+	}
+
+	if m.routes == nil {
+		m.routes = map[string]mailgun.Route{}
+	}
+	m.routes[newRoute.Id] = newRoute
+
+	toJSON(w, map[string]interface{}{
+		"message": "Route has been created",
+		"route":   newRoute,
+	}, http.StatusOK)
+}
+
+func (m *MailgunMockServer) getRoute(w http.ResponseWriter, r *http.Request) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	routeID := r.PathValue("id")
+	if routeID == "" {
+		toJSON(w, map[string]interface{}{
+			"message": "Route ID is required",
+		}, http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := m.failRoutes["get"]; ok {
+		if slices.Contains(m.failRoutes["get"], routeID) {
+			toJSON(w, map[string]interface{}{
+				"message": "Failed to get route",
+			}, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	route, ok := m.routes[routeID]
+	if !ok {
+		toJSON(w, map[string]interface{}{
+			"message": "Route not found",
+		}, http.StatusNotFound)
+		return
+	}
+	toJSON(w, map[string]interface{}{
+		"route": route,
+	}, http.StatusOK)
+}
+
+func (m *MailgunMockServer) deleteRoute(w http.ResponseWriter, r *http.Request) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	routeID := r.PathValue("id")
+	if routeID == "" {
+		toJSON(w, map[string]interface{}{
+			"message": "Route ID is required",
+		}, http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := m.failRoutes["delete"]; ok {
+		if slices.Contains(m.failRoutes["delete"], routeID) {
+			toJSON(w, map[string]interface{}{
+				"message": "Failed to delete route",
+			}, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	delete(m.routes, routeID)
+	toJSON(w, map[string]interface{}{
+		"message": "Route has been deleted",
+		"id":      routeID,
+	}, http.StatusOK)
+}
+
+func (m *MailgunMockServer) updateRoute(w http.ResponseWriter, r *http.Request) {
+	defer m.mutex.Unlock()
+	m.mutex.Lock()
+
+	routeID := r.PathValue("id")
+	if routeID == "" {
+		toJSON(w, map[string]interface{}{
+			"message": "Route ID is required",
+		}, http.StatusBadRequest)
+		return
+	}
+	route, ok := m.routes[routeID]
+	if !ok {
+		toJSON(w, map[string]interface{}{
+			"message": "Route not found",
+		}, http.StatusNotFound)
+		return
+	}
+
+	if r.FormValue("action") != "" {
+		route.Actions = r.Form["action"]
+	}
+	if r.FormValue("priority") != "" {
+		p, err := strconv.Atoi(r.FormValue("priority"))
+		if err != nil {
+			toJSON(w, map[string]interface{}{
+				"message": "Invalid priority value",
+			}, http.StatusBadRequest)
+			return
+		}
+		route.Priority = p
+	}
+	if r.FormValue("description") != "" {
+		route.Description = r.FormValue("description")
+	}
+	if r.FormValue("expression") != "" {
+		route.Expression = r.FormValue("expression")
+	}
+
+	m.routes[routeID] = route
+	toJSON(w, map[string]interface{}{
+		"message": "Route has been updated",
+		"route":   route,
+	}, http.StatusOK)
 }
 
 func (m *MailgunMockServer) authHandler(next http.HandlerFunc) http.HandlerFunc {

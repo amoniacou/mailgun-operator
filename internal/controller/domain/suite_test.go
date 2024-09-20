@@ -110,11 +110,20 @@ var _ = BeforeSuite(func() {
 		DomainVerifyDuration: 5,
 	}
 
-	// start reconciler
+	// start domain reconciler
 	err = (&DomainReconciler{
 		Client:   k8sManager.GetClient(),
 		Scheme:   k8sManager.GetScheme(),
 		Recorder: k8sManager.GetEventRecorderFor("domain-controller"),
+		Config:   operatorConfig,
+	}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
+	// start router reconciler
+	err = (&RouteReconciler{
+		Client:   k8sManager.GetClient(),
+		Scheme:   k8sManager.GetScheme(),
+		Recorder: k8sManager.GetEventRecorderFor("route-controller"),
 		Config:   operatorConfig,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
@@ -191,4 +200,26 @@ func newDigitalOceanDomain(namespace, domainName string, externalDNS bool) *doma
 	err := k8sClient.Create(context.Background(), manager)
 	Expect(err).ToNot(HaveOccurred())
 	return manager
+}
+
+func newFakeRouter(namespace string) *domainv1.Route {
+	name := "route-" + rand.String(10)
+	router := &domainv1.Route{
+		TypeMeta: metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: domainv1.RouteSpec{
+			Description: "fake description",
+			Expression:  "match_recipient('.*@gmail.com')",
+			Actions: []string{
+				"store()",
+				"forward(\"https://example.com\")",
+			},
+		},
+	}
+	err := k8sClient.Create(context.Background(), router)
+	Expect(err).ToNot(HaveOccurred())
+	return router
 }

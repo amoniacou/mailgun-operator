@@ -31,4 +31,13 @@ resources:
   group: externaldns
   kind: DNSEndpoint
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: mailgun.com
+  group: domain
+  kind: Route
+  path: github.com/amoniacou/mailgun-operator/api/domain/v1
+  version: v1
 version: "3"

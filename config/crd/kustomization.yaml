@@ -4,6 +4,7 @@
 resources:
 - bases/domain.mailgun.com_domains.yaml
 - bases/domain.mailgun.com_webhooks.yaml
+- bases/domain.mailgun.com_routes.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
@@ -15,6 +16,7 @@ patches:
 # patches here are for enabling the CA injection for each CRD
 #- path: patches/cainjection_in_domain_domains.yaml
 #- path: patches/cainjection_in_domain_webhooks.yaml
+#- path: patches/cainjection_in_domain_routes.yaml
 # +kubebuilder:scaffold:crdkustomizecainjectionpatch
 
 # [WEBHOOK] To enable webhook, uncomment the following section

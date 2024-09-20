@@ -19,6 +19,7 @@ package v1
 import (
 	"github.com/mailgun/mailgun-go/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/external-dns/endpoint"
 )
 
 type DnsRecord struct {
@@ -51,8 +52,11 @@ const (
 type DomainSpec struct {
 	// Domain is a domain name which we need to create on Mailgun
 	Domain string `json:"domain"`
+
 	// Support for External-DNS
-	ExternalDNS *bool `json:"external_dns,omitempty"`
+	ExternalDNS        *bool               `json:"external_dns,omitempty"`
+	ExternalDNSRecords []endpoint.Endpoint `json:"external_dns_records,omitempty"`
+
 	// See https://documentation.mailgun.com/en/latest/api-domains.html#domains
 	WebScheme          *WebSchemeType `json:"web_scheme,omitempty"`
 	DKIMKeySize        *int           `json:"dkim_key_size,omitempty"`
@@ -66,13 +70,10 @@ type DomainSpec struct {
 	// Export SMTP or API credentials to a secret
 	ExportCredentials *bool `json:"export_credentials,omitempty"`
 	// Export SMTP credentials to a secret
-	// +kubebuilder:validation:RequiredIf=ExportCredentials==true
 	ExportSecretName *string `json:"export_secret_name,omitempty"`
 	// Export secret key for login
-	// +kubebuilder:validation:RequiredIf=ExportCredentials==true
 	ExportSecretLoginKey *string `json:"export_secret_login_key,omitempty"`
 	// Export secret key for password
-	// +kubebuilder:validation:RequiredIf=ExportCredentials==true
 	ExportSecretPasswordKey *string `json:"export_secret_password_key,omitempty"`
 
 	// Force validation of MX records for receiving mail
