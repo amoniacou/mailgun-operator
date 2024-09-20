@@ -18,6 +18,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/amoniacou/mailgun-operator/internal/configuration"
 	"github.com/mailgun/mailgun-go/v4"
@@ -68,31 +69,56 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	mg := r.Config.MailgunClient("")
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if !mailgunRoute.DeletionTimestamp.IsZero() {
+	if mailgunRoute.ObjectMeta.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then lets add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
 		if !controllerutil.ContainsFinalizer(mailgunRoute, routeFinalizer) {
+			log.V(1).Info("adding finalizer for route")
 			controllerutil.AddFinalizer(mailgunRoute, routeFinalizer)
 			if err := r.Update(ctx, mailgunRoute); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
-		return ctrl.Result{}, nil
 	} else {
 		// The object is being deleted
-		if controllerutil.ContainsFinalizer(mailgunRoute, domainFinalizer) {
-			_, err := mg.GetRoute(ctx, mailgunRoute.Status.RouteID)
-			if err == nil {
-				log.V(1).Info("route not exits on mailgun", "id", mailgunRoute.Status.RouteID)
+		if controllerutil.ContainsFinalizer(mailgunRoute, routeFinalizer) {
+			log.V(1).Info("route is being deleted")
+			if mailgunRoute.Status.RouteID == nil {
+				// no need to try to remove the route if it does not created
+				controllerutil.RemoveFinalizer(mailgunRoute, routeFinalizer)
+				if err := r.Update(ctx, mailgunRoute); err != nil {
+					return ctrl.Result{}, err
+				}
 				return ctrl.Result{}, nil
 			}
-			if err := mg.DeleteRoute(ctx, mailgunRoute.Status.RouteID); err != nil {
+			log.V(1).Info("trying to get route from mailgun")
+			_, err := mg.GetRoute(ctx, *mailgunRoute.Status.RouteID)
+			if err != nil {
+				log.V(1).Info("route not exits on mailgun", "id", *mailgunRoute.Status.RouteID, "error", err)
+				return ctrl.Result{}, nil
+			}
+			log.V(1).Info("trying to delete route from mailgun")
+			if err := mg.DeleteRoute(ctx, *mailgunRoute.Status.RouteID); err != nil {
+				errorMessage := "Unable to delete route from Mailgun"
+				mailgunRoute.Status.MailgunError = &errorMessage
+				log.V(1).Info("error deleting route from mailgun", "id", *mailgunRoute.Status.RouteID, "error", err)
+				if err := r.Status().Update(ctx, mailgunRoute); err != nil {
+					log.V(1).Info("unable to update status")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Eventf(mailgunRoute, corev1.EventTypeWarning, "Deleted", "Route is deleted from mailgun")
+			controllerutil.RemoveFinalizer(mailgunRoute, routeFinalizer)
+			if err := r.Update(ctx, mailgunRoute); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
 		}
 	}
+
+	log.V(1).Info("generate route request")
 
 	routeRequest := mailgun.Route{
 		Description: mailgunRoute.Spec.Description,
@@ -104,28 +130,55 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		routeRequest.Priority = *mailgunRoute.Spec.Priority
 	}
 
-	if len(mailgunRoute.Status.RouteID) > 0 {
-		_, err := mg.GetRoute(ctx, mailgunRoute.Status.RouteID)
-		if err == nil {
-			log.V(1).Info("route not exits not mailgun", "id", mailgunRoute.Status.RouteID)
+	log.V(1).Info("Route Request", "request", routeRequest)
+
+	if mailgunRoute.Status.RouteID != nil && len(*mailgunRoute.Status.RouteID) > 0 {
+		existRoute, err := mg.GetRoute(ctx, *mailgunRoute.Status.RouteID)
+		if err != nil {
+			log.V(1).Info("route not exits not mailgun", "id", *mailgunRoute.Status.RouteID, "error", err)
 			return ctrl.Result{}, nil
 		}
-		_, err = mg.UpdateRoute(ctx, mailgunRoute.Status.RouteID, routeRequest)
-		if err != nil {
-			log.Error(err, "unable to update route")
-			return ctrl.Result{}, err
+		update := false
+		if existRoute.Description != routeRequest.Description ||
+			existRoute.Expression != routeRequest.Expression ||
+			len(existRoute.Actions) != len(routeRequest.Actions) ||
+			existRoute.Priority != routeRequest.Priority {
+			update = true
+		}
+		if update {
+			log.V(1).Info("update route on mailgun")
+			_, err = mg.UpdateRoute(ctx, *mailgunRoute.Status.RouteID, routeRequest)
+			if err != nil {
+				log.V(1).Info("Unable to update route", "error", err)
+				errorMessage := "Unable to update route"
+				mailgunRoute.Status.MailgunError = &errorMessage
+				if err := r.Status().Update(ctx, mailgunRoute); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, err
+			}
 		}
 		return ctrl.Result{}, nil
 	} else {
+		log.V(1).Info("create route on mailgun")
 		routeResp, err := mg.CreateRoute(ctx, routeRequest)
 
 		if err != nil {
 			log.Error(err, "unable to create route")
-			r.Recorder.Eventf(mailgunRoute, corev1.EventTypeWarning, "FailedCreate", err.Error())
-			return ctrl.Result{}, err
+			errorMessage := "Unable to create route"
+			r.Recorder.Eventf(mailgunRoute, corev1.EventTypeWarning, "FailedCreate", errorMessage)
+			mailgunRoute.Status.MailgunError = &errorMessage
+			if err := r.Status().Update(ctx, mailgunRoute); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{
+				RequeueAfter: 1 * time.Minute,
+			}, nil
 		}
-		mailgunRoute.Status.RouteID = routeResp.Id
+		mailgunRoute.Status.RouteID = &routeResp.Id
 	}
+
+	log.V(1).Info("successfully created/updated route", "id", *mailgunRoute.Status.RouteID)
 
 	return ctrl.Result{}, r.Status().Update(ctx, mailgunRoute)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mailgun/mailgun-go/v4"
+	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 type MailgunMockServer struct {
@@ -20,7 +21,7 @@ type MailgunMockServer struct {
 	failedDomains   []string
 	domainList      []mailgun.DomainContainer
 	routes          map[string]mailgun.Route
-	failRoutes      string
+	failRoutes      map[string][]string
 	mutex           sync.Mutex
 }
 
@@ -102,10 +103,17 @@ func (m *MailgunMockServer) DeleteDomain(domainName string) {
 	}
 }
 
-func (m *MailgunMockServer) FailRoutes(action string) {
+func (m *MailgunMockServer) FailRoutes(action, id string) {
 	defer m.mutex.Unlock()
 	m.mutex.Lock()
-	m.failRoutes = action
+
+	if m.failRoutes == nil {
+		m.failRoutes = map[string][]string{}
+	}
+	if _, ok := m.failRoutes[action]; !ok {
+		m.failRoutes[action] = []string{}
+	}
+	m.failRoutes[action] = append(m.failRoutes[action], id)
 }
 
 // Private methods
@@ -137,8 +145,18 @@ func (m *MailgunMockServer) createDomain(w http.ResponseWriter, r *http.Request)
 
 	newDomain := m.newMGDomainFor(domainName)
 
-	receiveRecords := m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
-	sendingRecords := m.newMGDnsRecordsFor(domainName, true, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
+	receiveRecords := m.newMGDnsRecordsFor(
+		domainName,
+		false,
+		slices.Contains(m.activeDomains, domainName),
+		slices.Contains(m.activeMXDomains, domainName),
+	)
+	sendingRecords := m.newMGDnsRecordsFor(
+		domainName,
+		true,
+		slices.Contains(m.activeDomains, domainName),
+		slices.Contains(m.activeMXDomains, domainName),
+	)
 
 	m.domainList = append(m.domainList, mailgun.DomainContainer{
 		Domain:              newDomain,
@@ -163,7 +181,12 @@ func (m *MailgunMockServer) getDomain(w http.ResponseWriter, r *http.Request) {
 	domainName := r.PathValue("domain")
 	for i, domain := range m.domainList {
 		if domainName == domain.Domain.Name {
-			m.domainList[i].ReceivingDNSRecords = m.newMGDnsRecordsFor(domainName, false, slices.Contains(m.activeDomains, domainName), slices.Contains(m.activeMXDomains, domainName))
+			m.domainList[i].ReceivingDNSRecords = m.newMGDnsRecordsFor(
+				domainName,
+				false,
+				slices.Contains(m.activeDomains, domainName),
+				slices.Contains(m.activeMXDomains, domainName),
+			)
 			toJSON(w, map[string]interface{}{
 				"message":               "Domain DNS records have been retrieved",
 				"domain":                m.domainList[i].Domain,
@@ -243,8 +266,13 @@ func (m *MailgunMockServer) createRoute(w http.ResponseWriter, r *http.Request) 
 	m.mutex.Lock()
 
 	description := r.FormValue("description")
+	if description == "fail" {
+		toJSON(w, map[string]string{
+			"message": "Failed to create route due to invalid expression.",
+		}, http.StatusInternalServerError)
+		return
+	}
 	expression := r.FormValue("expression")
-	action := r.FormValue("action")
 	priority := r.FormValue("priority")
 	priorityVal := 0
 	if len(priority) > 0 {
@@ -257,11 +285,11 @@ func (m *MailgunMockServer) createRoute(w http.ResponseWriter, r *http.Request) 
 		}
 		priorityVal = p
 	}
-	PrettyPrint("actions:")
-	PrettyPrint(action)
+
+	id := "route-" + rand.String(10)
 
 	newRoute := mailgun.Route{
-		Id:          "myrouter",
+		Id:          id,
 		Priority:    priorityVal,
 		Actions:     r.Form["action"],
 		Description: description,
@@ -283,13 +311,6 @@ func (m *MailgunMockServer) getRoute(w http.ResponseWriter, r *http.Request) {
 	defer m.mutex.Unlock()
 	m.mutex.Lock()
 
-	if m.failRoutes == "get" {
-		toJSON(w, map[string]interface{}{
-			"message": "Failed to get route",
-		}, http.StatusInternalServerError)
-		return
-	}
-
 	routeID := r.PathValue("id")
 	if routeID == "" {
 		toJSON(w, map[string]interface{}{
@@ -297,6 +318,16 @@ func (m *MailgunMockServer) getRoute(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusBadRequest)
 		return
 	}
+
+	if _, ok := m.failRoutes["get"]; ok {
+		if slices.Contains(m.failRoutes["get"], routeID) {
+			toJSON(w, map[string]interface{}{
+				"message": "Failed to get route",
+			}, http.StatusInternalServerError)
+			return
+		}
+	}
+
 	route, ok := m.routes[routeID]
 	if !ok {
 		toJSON(w, map[string]interface{}{
@@ -313,12 +344,6 @@ func (m *MailgunMockServer) deleteRoute(w http.ResponseWriter, r *http.Request) 
 	defer m.mutex.Unlock()
 	m.mutex.Lock()
 
-	if m.failRoutes == "delete" {
-		toJSON(w, map[string]interface{}{
-			"message": "Failed to delete route",
-		}, http.StatusInternalServerError)
-		return
-	}
 	routeID := r.PathValue("id")
 	if routeID == "" {
 		toJSON(w, map[string]interface{}{
@@ -326,6 +351,16 @@ func (m *MailgunMockServer) deleteRoute(w http.ResponseWriter, r *http.Request) 
 		}, http.StatusBadRequest)
 		return
 	}
+
+	if _, ok := m.failRoutes["delete"]; ok {
+		if slices.Contains(m.failRoutes["delete"], routeID) {
+			toJSON(w, map[string]interface{}{
+				"message": "Failed to delete route",
+			}, http.StatusInternalServerError)
+			return
+		}
+	}
+
 	delete(m.routes, routeID)
 	toJSON(w, map[string]interface{}{
 		"message": "Route has been deleted",

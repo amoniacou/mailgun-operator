@@ -64,11 +64,13 @@ spec:
           status:
             description: RouteStatus defines the observed state of Route
             properties:
+              mailgun_error:
+                description: Mailgun error message if any error occurred during route
+                  creation or deletion
+                type: string
               route_id:
                 description: ID of created route on mailgun
                 type: string
-            required:
-            - route_id
             type: object
         type: object
     served: true

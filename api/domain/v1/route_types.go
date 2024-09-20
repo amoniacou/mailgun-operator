@@ -40,7 +40,9 @@ type RouteSpec struct {
 // RouteStatus defines the observed state of Route
 type RouteStatus struct {
 	// ID of created route on mailgun
-	RouteID string `json:"route_id"`
+	RouteID *string `json:"route_id,omitempty"`
+	// Mailgun error message if any error occurred during route creation or deletion
+	MailgunError *string `json:"mailgun_error,omitempty"`
 }
 
 // +kubebuilder:object:root=true

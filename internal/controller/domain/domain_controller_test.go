@@ -21,6 +21,7 @@ import (
 	"time"
 
 	domainv1 "github.com/amoniacou/mailgun-operator/api/domain/v1"
+	"github.com/amoniacou/mailgun-operator/internal/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -124,6 +125,82 @@ var _ = Describe("Domain Controller", func() {
 			Expect(dnsEndpoint.Spec.Endpoints[2].Targets).To(Equal(endpoint.Targets{"mailgun.org"}))
 		})
 
+		It("should create mailgun domain, store DNS records and create external DNS entities with additional records", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			domainName := "another-domain-with-records.com"
+			forceMXChecks := true
+			name := "domain-" + rand.String(10)
+			doDomain := &domainv1.Domain{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+				},
+				Spec: domainv1.DomainSpec{
+					Domain:       domainName,
+					ForceMXCheck: &forceMXChecks,
+					ExternalDNS:  &forceMXChecks,
+					ExternalDNSRecords: []endpoint.Endpoint{
+						{
+							DNSName:    "*." + domainName,
+							RecordType: "A",
+							Targets:    []string{"127.0.0.1"},
+						},
+						{
+							DNSName:    domainName,
+							RecordType: "A",
+							Targets:    []string{"127.0.0.1"},
+						},
+					},
+				},
+			}
+
+			err := k8sClient.Create(ctx, doDomain)
+			Expect(err).ToNot(HaveOccurred())
+
+			doDomainLookup := types.NamespacedName{Name: doDomain.Name, Namespace: namespace}
+			createdDODomain := &domainv1.Domain{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doDomainLookup, createdDODomain)
+				if err == nil {
+					utils.PrettyPrint(createdDODomain.Status.State)
+					return createdDODomain.Status.State == domainv1.DomainStateCreated
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(createdDODomain.Spec.Domain).Should(Equal(domainName))
+			Expect(createdDODomain.Status.DomainState).Should(Equal("unverified"))
+			Expect(createdDODomain.Status.ReceivingDnsRecords).Should(HaveLen(2))
+			Expect(createdDODomain.Status.SendingDnsRecords).Should(HaveLen(3))
+			dnsEndpoint := &endpoint.DNSEndpoint{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      createdDODomain.Name,
+				Namespace: createdDODomain.Namespace,
+			}, dnsEndpoint)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dnsEndpoint.Spec.Endpoints).Should(HaveLen(6))
+			// mx records
+			Expect(dnsEndpoint.Spec.Endpoints[3].RecordType).To(Equal("MX"))
+			Expect(dnsEndpoint.Spec.Endpoints[3].DNSName).To(Equal(domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[3].Targets).To(Equal(endpoint.Targets{"10 mxa.mailgun.org", "10 mxb.mailgun.org"}))
+			Expect(dnsEndpoint.Spec.Endpoints[0].RecordType).To(Equal("TXT"))
+			Expect(dnsEndpoint.Spec.Endpoints[0].DNSName).To(Equal(domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[0].Targets).To(Equal(endpoint.Targets{"v=spf1 include:mailgun.org ~all"}))
+			Expect(dnsEndpoint.Spec.Endpoints[1].RecordType).To(Equal("TXT"))
+			Expect(dnsEndpoint.Spec.Endpoints[1].DNSName).To(Equal("d.mail." + domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[1].Targets).To(Equal(endpoint.Targets{"k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUA..."}))
+			Expect(dnsEndpoint.Spec.Endpoints[2].RecordType).To(Equal("CNAME"))
+			Expect(dnsEndpoint.Spec.Endpoints[2].DNSName).To(Equal("email." + domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[2].Targets).To(Equal(endpoint.Targets{"mailgun.org"}))
+			Expect(dnsEndpoint.Spec.Endpoints[4].RecordType).To(Equal("A"))
+			Expect(dnsEndpoint.Spec.Endpoints[4].DNSName).To(Equal("*." + domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[4].Targets).To(Equal(endpoint.Targets{"127.0.0.1"}))
+			Expect(dnsEndpoint.Spec.Endpoints[5].RecordType).To(Equal("A"))
+			Expect(dnsEndpoint.Spec.Endpoints[5].DNSName).To(Equal(domainName))
+			Expect(dnsEndpoint.Spec.Endpoints[5].Targets).To(Equal(endpoint.Targets{"127.0.0.1"}))
+		})
+
 		It("should create mailgun domain and change state to activated", func() {
 			namespace := newFakeNamespace()
 			Expect(namespace).ToNot(BeNil())
@@ -199,6 +276,7 @@ var _ = Describe("Domain Controller", func() {
 				return 0
 			}, timeout, interval).Should(And(SatisfyAll(BeNumerically(">=", 2), BeNumerically("<", 5))))
 			Expect(createdDODomain.Status.State).To(Equal(domainv1.DomainStateCreated))
+
 			By("Activate mx records on fake mailgun")
 
 			mgm.ActivateMXDomain(domainName)

@@ -312,6 +312,8 @@ func (r *DomainReconciler) checkMXRecordsAndSetState(ctx context.Context, mg *ma
 // create external DNS entity for the domain
 func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunDomain *domainv1.Domain) error {
 	log := log.FromContext(ctx)
+	log.V(1).Info("Creating external DNS entity for domain", "domain", mailgunDomain.Spec.Domain)
+	log.V(1).Info("Spec:", "domain", mailgunDomain.Spec)
 	domainName := mailgunDomain.Spec.Domain
 	// create receive records
 	dnsEntrypoint := &endpoint.DNSEndpoint{
@@ -346,6 +348,15 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 	if len(mxRecords) > 0 {
 		dnsRecordEndpoint := endpoint.NewEndpoint(domainName, "MX", mxRecords...)
 		dnsEntrypoint.Spec.Endpoints = append(dnsEntrypoint.Spec.Endpoints, dnsRecordEndpoint)
+	}
+
+	if len(mailgunDomain.Spec.ExternalDNSRecords) > 0 {
+		log.V(1).Info("Adding external DNS records to the domain", "domain", domainName)
+		for _, record := range mailgunDomain.Spec.ExternalDNSRecords {
+			dnsRecordEndpoint := endpoint.NewEndpoint(record.DNSName, record.RecordType, record.Targets...)
+			dnsEntrypoint.Spec.Endpoints = append(dnsEntrypoint.Spec.Endpoints, dnsRecordEndpoint)
+		}
+		log.V(1).Info("External DNS records added to the domain", "domain", domainName, "entrypoint", dnsEntrypoint.Spec.Endpoints)
 	}
 
 	if err := r.Create(ctx, dnsEntrypoint); err != nil {
