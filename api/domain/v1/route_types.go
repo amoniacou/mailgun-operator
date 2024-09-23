@@ -30,7 +30,7 @@ type RouteSpec struct {
 	Expression string `json:"expression"`
 	// Action to be taken when the route matches an incoming email
 	// +kubebuilder:validation:required
-	Actions []string `json:"action"`
+	Actions []string `json:"actions"`
 	// Priority of route
 	// Smaller number indicates higher priority. Higher priority routes are handled first.
 	// +optional
