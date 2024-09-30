@@ -330,10 +330,6 @@ func (r *DomainReconciler) createExternalDNSEntity(ctx context.Context, mailgunD
 
 	mxRecords := []string{}
 	for _, record := range records {
-		// skip the already valid records. Looks like they already have been created on DNS so no need to create again
-		if record.Valid == "valid" {
-			continue
-		}
 		dnsName := record.Name
 		target := record.Value
 		// sending record
