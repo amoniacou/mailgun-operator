@@ -163,6 +163,7 @@ var _ = Describe("Route Controller", func() {
 
 			Expect(*createdRouter.Status.RouteID).ToNot(BeEmpty())
 			Expect(createdRouter.Finalizers).To(ContainElement(routeFinalizer))
+
 			By("Make the delete route to fail")
 
 			mgm.FailRoutes("delete", *createdRouter.Status.RouteID)
@@ -226,6 +227,132 @@ var _ = Describe("Route Controller", func() {
 
 			err = k8sClient.Get(ctx, doRouterLookup, createdRouter)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(createdRouter.Status.MailgunError).To(BeNil())
+		})
+
+		It("should not create route on mailgun if domain is not exist", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			routerName := "test-router-without-domain"
+			existDomain := "some-non-exist-example.com"
+			router := &domainv1.Route{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "domain.mydomain.com/v1",
+					Kind:       "Route",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      routerName,
+					Namespace: namespace,
+				},
+				Spec: domainv1.RouteSpec{
+					Description: "test-router",
+					Expression:  "match_recipient('.*@example.com')",
+					Domain:      &existDomain,
+					Actions: []string{
+						"stop()",
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, router)
+			Expect(err).ToNot(HaveOccurred())
+
+			doRouterLookup := types.NamespacedName{Name: router.Name, Namespace: namespace}
+			createdRouter := &domainv1.Route{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doRouterLookup, createdRouter)
+				if err == nil {
+					return createdRouter.Status.MailgunError != nil && len(*createdRouter.Status.MailgunError) > 0
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(createdRouter.Status.RouteID).To(BeNil())
+			Expect(*createdRouter.Status.MailgunError).To(Equal("Domain is not exist on mailgun"))
+		})
+
+		It("should not create route on mailgun if domain is not active", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			routerName := "test-router-wit-not-active-domain"
+			existDomain := "not-active-example.com"
+			mgm.AddDomain(existDomain)
+			router := &domainv1.Route{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "domain.mydomain.com/v1",
+					Kind:       "Route",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      routerName,
+					Namespace: namespace,
+				},
+				Spec: domainv1.RouteSpec{
+					Description: "test-router",
+					Expression:  "match_recipient('.*@example.com')",
+					Domain:      &existDomain,
+					Actions: []string{
+						"stop()",
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, router)
+			Expect(err).ToNot(HaveOccurred())
+
+			doRouterLookup := types.NamespacedName{Name: router.Name, Namespace: namespace}
+			createdRouter := &domainv1.Route{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doRouterLookup, createdRouter)
+				if err == nil {
+					return createdRouter.Status.MailgunError != nil && len(*createdRouter.Status.MailgunError) > 0
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(createdRouter.Status.RouteID).To(BeNil())
+			Expect(*createdRouter.Status.MailgunError).To(Equal("Domain is not active yet"))
+		})
+
+		It("should create route on mailgun if domain is active", func() {
+			namespace := newFakeNamespace()
+			Expect(namespace).ToNot(BeNil())
+			routerName := "test-router-with-active-domain"
+			existDomain := "active-example.com"
+			mgm.ActivateDomain(existDomain)
+			mgm.AddDomain(existDomain)
+			router := &domainv1.Route{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "domain.mydomain.com/v1",
+					Kind:       "Route",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      routerName,
+					Namespace: namespace,
+				},
+				Spec: domainv1.RouteSpec{
+					Description: "test-router",
+					Expression:  "match_recipient('.*@example.com')",
+					Domain:      &existDomain,
+					Actions: []string{
+						"stop()",
+					},
+				},
+			}
+			err := k8sClient.Create(ctx, router)
+			Expect(err).ToNot(HaveOccurred())
+
+			doRouterLookup := types.NamespacedName{Name: router.Name, Namespace: namespace}
+			createdRouter := &domainv1.Route{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, doRouterLookup, createdRouter)
+				if err == nil {
+					return createdRouter.Status.RouteID != nil && len(*createdRouter.Status.RouteID) > 0
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(*createdRouter.Status.RouteID).ToNot(BeEmpty())
 			Expect(createdRouter.Status.MailgunError).To(BeNil())
 		})
 	})

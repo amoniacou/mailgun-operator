@@ -66,7 +66,12 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	log.V(1).Info("Start to reconcile route", "route", mailgunRoute)
-	mg := r.Config.MailgunClient("")
+	routeDomain := ""
+
+	if mailgunRoute.Spec.Domain != nil && len(*mailgunRoute.Spec.Domain) > 0 {
+		routeDomain = *mailgunRoute.Spec.Domain
+	}
+	mg := r.Config.MailgunClient(routeDomain)
 
 	// examine DeletionTimestamp to determine if object is under deletion
 	if mailgunRoute.ObjectMeta.DeletionTimestamp.IsZero() {
@@ -74,10 +79,12 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// then lets add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
 		if !controllerutil.ContainsFinalizer(mailgunRoute, routeFinalizer) {
-			log.V(1).Info("adding finalizer for route")
-			controllerutil.AddFinalizer(mailgunRoute, routeFinalizer)
-			if err := r.Update(ctx, mailgunRoute); err != nil {
-				return ctrl.Result{}, err
+			if mailgunRoute.Status.RouteID != nil && len(*mailgunRoute.Status.RouteID) > 0 {
+				log.V(1).Info("adding finalizer for route")
+				controllerutil.AddFinalizer(mailgunRoute, routeFinalizer)
+				if err := r.Update(ctx, mailgunRoute); err != nil {
+					return ctrl.Result{}, err
+				}
 			}
 		}
 	} else {
@@ -86,17 +93,24 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			log.V(1).Info("route is being deleted")
 			if mailgunRoute.Status.RouteID == nil {
 				// no need to try to remove the route if it does not created
-				controllerutil.RemoveFinalizer(mailgunRoute, routeFinalizer)
-				if err := r.Update(ctx, mailgunRoute); err != nil {
-					return ctrl.Result{}, err
+				if controllerutil.RemoveFinalizer(mailgunRoute, routeFinalizer) {
+					if err := r.Update(ctx, mailgunRoute); err != nil {
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{}, nil
 				}
-				return ctrl.Result{}, nil
 			}
 			log.V(1).Info("trying to get route from mailgun")
 			_, err := mg.GetRoute(ctx, *mailgunRoute.Status.RouteID)
 			if err != nil {
 				log.V(1).Info("route not exits on mailgun", "id", *mailgunRoute.Status.RouteID, "error", err)
-				return ctrl.Result{}, nil
+				r.Recorder.Eventf(mailgunRoute, corev1.EventTypeWarning, "Deleted", "Route is already deleted on mailgun")
+				if controllerutil.RemoveFinalizer(mailgunRoute, routeFinalizer) {
+					if err := r.Update(ctx, mailgunRoute); err != nil {
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{}, nil
+				}
 			}
 			log.V(1).Info("trying to delete route from mailgun")
 			if err := mg.DeleteRoute(ctx, *mailgunRoute.Status.RouteID); err != nil {
@@ -115,6 +129,35 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{}, nil
+		}
+	}
+
+	if len(routeDomain) > 0 {
+		log.V(1).Info("Get domain from mailgun", "domain", routeDomain)
+		resp, err := mg.GetDomain(ctx, routeDomain)
+		if err != nil {
+			errorMessage := "Domain is not exist on mailgun"
+			mailgunRoute.Status.MailgunError = &errorMessage
+			if err := r.Status().Update(ctx, mailgunRoute); err != nil {
+				log.V(1).Info("unable to update status")
+				return ctrl.Result{}, err
+			}
+			log.V(1).Info(errorMessage)
+			return ctrl.Result{
+				RequeueAfter: 5 * time.Minute,
+			}, nil
+		}
+		if resp.Domain.State != "active" {
+			errorMessage := "Domain is not active yet"
+			mailgunRoute.Status.MailgunError = &errorMessage
+			if err := r.Status().Update(ctx, mailgunRoute); err != nil {
+				log.V(1).Info("unable to update status")
+				return ctrl.Result{}, err
+			}
+			log.V(1).Info(errorMessage)
+			return ctrl.Result{
+				RequeueAfter: 5 * time.Minute,
+			}, nil
 		}
 	}
 
@@ -157,6 +200,7 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				}
 				return ctrl.Result{}, err
 			}
+			log.V(1).Info("successfully updated route", "id", *mailgunRoute.Status.RouteID)
 		}
 		return ctrl.Result{}, nil
 	} else {
@@ -176,11 +220,20 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}, nil
 		}
 		mailgunRoute.Status.RouteID = &routeResp.Id
+		if err := r.Status().Update(ctx, mailgunRoute); err != nil {
+			return ctrl.Result{}, err
+		}
+		if !controllerutil.ContainsFinalizer(mailgunRoute, routeFinalizer) {
+			log.V(1).Info("adding finalizer for route")
+			controllerutil.AddFinalizer(mailgunRoute, routeFinalizer)
+		}
+		if err := r.Update(ctx, mailgunRoute); err != nil {
+			return ctrl.Result{}, err
+		}
+		log.V(1).Info("successfully created route", "id", *mailgunRoute.Status.RouteID)
 	}
 
-	log.V(1).Info("successfully created/updated route", "id", *mailgunRoute.Status.RouteID)
-
-	return ctrl.Result{}, r.Status().Update(ctx, mailgunRoute)
+	return ctrl.Result{}, nil
 }
 
 func (r *RouteReconciler) SetupWithManager(mgr ctrl.Manager) error {

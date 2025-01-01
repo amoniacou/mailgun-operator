@@ -48,6 +48,11 @@ spec:
               description:
                 description: Description of the route
                 type: string
+              domain:
+                description: |-
+                  Domain of related route
+                  It will help to not going into loop for domains which is not valid yet
+                type: string
               expression:
                 description: Matching expression for the route
                 type: string

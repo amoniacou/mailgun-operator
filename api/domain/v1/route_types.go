@@ -35,6 +35,10 @@ type RouteSpec struct {
 	// Smaller number indicates higher priority. Higher priority routes are handled first.
 	// +optional
 	Priority *int `json:"priority"`
+	// Domain of related route
+	// It will help to not going into loop for domains which is not valid yet
+	// +optional
+	Domain *string `json:"domain"`
 }
 
 // RouteStatus defines the observed state of Route
